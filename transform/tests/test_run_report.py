@@ -60,7 +60,8 @@ def _outcome(ok: bool = True) -> DbtOutcome:
 
 def test_collect_report_data_counts_and_missing_relation() -> None:
     responses: dict[str, object] = {
-        'select count(*) from "raw"."raw__edinet_document_index"': (162701,),
+        'select count(*) from "cleansed"."cleansed__edinet__documents"': (222,),
+        'select count(*) from "cleansed"."cleansed__edinet__facts"': (9_500_000,),
         'select count(*) from "raw"."raw__jpx_file_catalog"': psycopg2.Error("does not exist"),
         "max(file_date), count(distinct edinet_code)": ("2026-09-08", 123),
         "max(period), count(*)": (None, 0),
@@ -68,8 +69,12 @@ def test_collect_report_data_counts_and_missing_relation() -> None:
     data = collect_report_data(FakeConn(FakeCursor(responses)))
 
     counts = {(s, t): n for s, t, n in data.layer_counts}
-    assert set(counts) == {("raw", "raw__edinet_document_index"), ("raw", "raw__jpx_file_catalog")}
-    assert counts[("raw", "raw__edinet_document_index")] == 162701
+    assert set(counts) == {
+        ("cleansed", "cleansed__edinet__documents"),
+        ("cleansed", "cleansed__edinet__facts"),
+        ("raw", "raw__jpx_file_catalog"),
+    }
+    assert counts[("cleansed", "cleansed__edinet__facts")] == 9_500_000
     assert counts[("raw", "raw__jpx_file_catalog")] is None  # 存在しない → None
     assert data.edinet_latest_date == "2026-09-08"
     assert data.edinet_company_count == 123
@@ -81,7 +86,8 @@ def _sample_data() -> ReportData:
     return ReportData(
         generated_at=datetime.datetime(2026, 9, 11, 4, 1, 45, tzinfo=JST),
         layer_counts=[
-            ("raw", "raw__edinet_document_index", 162701),
+            ("cleansed", "cleansed__edinet__documents", 222),
+            ("cleansed", "cleansed__edinet__facts", 9_500_000),
             ("raw", "raw__jpx_file_catalog", 9961),
         ],
         edinet_latest_date="2026-09-08",
@@ -95,9 +101,9 @@ def test_render_html_success_contains_counts_and_house_style() -> None:
     html = render_html(_sample_data(), _outcome(ok=True))
     assert "background: #fff" in html
     assert "✅ 成功" in html
-    assert "162,701" in html
-    assert "raw__edinet_document_index" in html
-    assert "raw__edinet_csv_facts" not in html  # フルスキャン回避で含めない
+    assert "9,500,000" in html
+    assert "cleansed__edinet__facts" in html
+    assert "raw__edinet_csv_facts" not in html  # FDW フルスキャン回避で含めない
     assert "2026-09-08" in html
 
 
@@ -111,7 +117,7 @@ def test_summary_text_is_short_and_has_key_numbers() -> None:
     text = summary_text(_sample_data(), _outcome(ok=True))
     assert text.startswith("✅ 成功")
     assert "123社" in text
-    assert "162,701件" in text
+    assert "9,500,000行" in text
 
 
 def test_summary_text_when_no_dbt_models() -> None:

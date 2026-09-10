@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: cleansed__edinet__documents
+    description: "書類一覧インデックスの型付け版（上場会社の書類のみ、毎回フル rebuild）。"
+    columns:
+      - name: doc_id
+        data_tests: [not_null, unique]
+      - name: file_date
+        data_tests: [not_null]
+      - name: edinet_code
+        data_tests: [not_null]
+
+  - name: cleansed__edinet__facts
+    description: "EDINET CSV 明細の型付け・名寄せ版（incremental、landing 由来）。"
+    columns:
+      - name: doc_id
+        data_tests: [not_null]
+      - name: element_id
+        data_tests: [not_null]
+      - name: consolidation
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["consolidated", "non_consolidated", "other"]

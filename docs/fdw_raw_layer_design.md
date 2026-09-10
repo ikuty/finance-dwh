@@ -73,12 +73,35 @@ Python 製 FDW の `multicorn2` は述語プッシュダウンができるが、
     - `raw__edinet_document_index` の `count(*)` … 162,701 行 / **約 11 秒**（983 JSON）
     - `raw__edinet_csv_facts` の `count(*)` … 20,572,522 行 / **約 12 分**
       （82,631 個の `.csv.gz` を毎回解凍・パース。レイクは日々増える）
-  - 対応: 日次フローの実行レポートは `raw__edinet_csv_facts` の `count(*)` を**含めない**
-    （doc index と jpx の件数＋最新データ問い合わせのみ。フロー全体で数十秒）。
-    CSV 明細の行数は手動 `psql` で数える。
-  - 回避策（cleansed を作る段階、または夜間実行時間が問題化したら）: Prefect フローに
-    「load」タスクを足し、新規ぶんだけを native テーブルへ `COPY` して、以降はそれを
-    source にする。
+  - **対応（実装済み、edinet_csv_facts）**: 下記「landing 経由の日付単位 load」。
+  - 日次フローの実行レポートは FDW を直接数えない（`raw__edinet_csv_facts` は約12分、
+    `raw__edinet_document_index` も約11秒）。cleansed の native テーブルと jpx カタログを数える。
+
+## landing 経由の日付単位 load（edinet_csv_facts、2026-09-11）
+
+FDW を「日付パラメータ付きの抽出専用」に格下げし、native の中間テーブルを挟む。
+
+```
+edinet_csv_fdw.py --date YYYY-MM-DD          # glob を raw/{yyyy}/{mm}/{dd}/ に限定（数秒）
+  ↓  Prefect: flows/load_edinet.py（dbt の外）
+landing.edinet_csv_facts                     # native・全列 text・file_date インデックス
+  + landing.edinet_csv_facts_load_log        # file_date PK / row_count / loaded_at
+  ↓  dbt
+cleansed.cleansed__edinet__facts             # incremental（delete+insert）
+```
+
+- **取り込み対象日** = 「直近 `LANDING_LOOKBACK_DAYS`（既定7）日」∪「レイクに日付
+  ディレクトリがあるが `_load_log` に無い日」。前者は edinet-dl の `DAYS_WINDOW` による
+  遡及取得、後者は過去バックフィルを拾う。
+- **冪等性**: 1 日ぶんを `BEGIN; DELETE WHERE file_date=X; COPY; upsert _load_log; COMMIT`。
+- **incremental の駆動**: `cleansed__edinet__facts` に `_landing_loaded_at`（各行の
+  出所日の `_load_log.loaded_at`）を持たせ、`loaded_at > max(_landing_loaded_at)` の
+  日だけ処理。ルックバック窓ではなく透かしなので、古い日を後からバックフィルしても拾える。
+- **名寄せの正しさ**: 対象日のデータポイント・キーに一致する既存（`{{ this }}`）行も
+  combined に混ぜてから最新提出だけ残す。過去の古い提出が来ても既存の新しい提出が勝つ。
+- **既知の非効率**: 対象日の行が全部フィルタで落ちる日（上場会社の CSV が無く大量保有
+  だけ、等）は透かしが進まず毎回再スキャンされる。native の index scan で数ミリ秒なので許容。
+- **document_index / jpx** は 1〜11 秒なので当面この方式にはしない（将来の候補）。
 - **SIGPIPE**: 下流（`file_fdw` / `| head`）が `LIMIT` 等で読み切らずにパイプを閉じると
   Python が `BrokenPipeError` で終了コード 120 になる。各ラッパーは `main()` 冒頭で
   `signal.signal(signal.SIGPIPE, SIG_DFL)` して素直に終了させる（実機で確認済みの不具合）。

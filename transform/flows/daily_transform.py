@@ -3,8 +3,9 @@
 Prefect の ephemeral モードで単発実行する（常駐サーバ・ワーカーは持たない）:
     python -m flows.daily_transform
 
-流れ: Postgres 起動待ち → dbt build → 実行レポート生成 → S3 アップロード → Slack 通知。
-dbt が失敗してもレポート生成・S3・Slack までは実行し、最後に非ゼロ終了する。
+流れ: Postgres 起動待ち → landing 取り込み → dbt build → 実行レポート生成 →
+S3 アップロード → Slack 通知。dbt が失敗してもレポート生成・S3・Slack までは実行し、
+最後に非ゼロ終了する。
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from dataclasses import dataclass
 
 from prefect import flow, get_run_logger, task
 
+from flows.load_edinet import load_edinet_csv_facts
 from flows.notify import send_slack_notification, upload_report_to_s3
 from report.run_report import DbtOutcome, generate_report
 
@@ -164,6 +166,10 @@ def publish_and_notify(html: str, summary: str) -> str:
 def daily_transform() -> str:
     logger = get_run_logger()
     wait_for_postgres()
+
+    loaded = load_edinet_csv_facts()
+    logger.info(f"landing 取り込み: {loaded['dates']} 日 / {loaded['rows']} 行")
+
     result = dbt_build()
 
     html, summary = build_report(result)

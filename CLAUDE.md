@@ -10,12 +10,18 @@ docker compose で構築する。全体像は `docs/architecture.md`、raw 層�
 - **レイクとは共有ストレージ境界で疎結合**。レイクのデータディレクトリを Postgres
   コンテナに `read-only` bind mount し、`file_fdw` + stdlib Python ラッパー
   （`postgres/fdw/*.py`）で外部テーブル `raw.raw__*` として読む。HTTP API 等は無し。
-- **現状は raw 層のみ**（2026-09-10 決定）。dbt は `models/raw/_raw__sources.yml` の
-  source 定義だけで、モデル（cleansed / mart）は 0 個。`dbt build` は「Nothing to do」。
-  cleansed の形は利用用途が固まってから設計する（一度モデルを作ったが、用途未確定の
-  まま持つのは負債になるため撤去した）。`macros/generate_schema_name.sql` は将来用に残置。
+- **`file_fdw` の全量スキャン対策（2026-09-11）**: `raw__edinet_csv_facts` は `count(*)`
+  すら実測 約12分（述語プッシュダウン不可）。そこで FDW は「日付指定の抽出専用」に
+  格下げし、`edinet_csv_fdw.py --date` で 1 日ぶんずつ native の `landing.edinet_csv_facts`
+  へ COPY（Prefect の `flows/load_edinet.py`、dbt の外）、dbt の `cleansed__edinet__facts`
+  は landing 由来の **incremental**（delete+insert、`_landing_loaded_at` 透かしで駆動）。
+  対象日 = 直近 `LANDING_LOOKBACK_DAYS`(7) 日 ∪（ディスクにあるが `_load_log` に無い日）。
+  詳細は `docs/fdw_raw_layer_design.md`。
+- **cleansed の現状**: `cleansed__edinet__documents`（table、FDW から毎回 rebuild、
+  上場会社のみ、docID で名寄せ）と `cleansed__edinet__facts`（incremental、上記）のみ。
+  jpx・doc index の cleansed / mart は用途が固まってから。
 - **命名**: 全リレーションにスキーマ名を prefix する。`raw.raw__edinet_csv_facts` /
-  `cleansed.cleansed__...`。mart のみ prefix 無し。
+  `cleansed.cleansed__...`。landing / mart は prefix 無し。
 - **JPX は「ファイル目録」のみ**（`raw__jpx_file_catalog`: format/period/path/byte_size/
   mtime）。PDF/TIFF の中身（相場数値）は `file_fdw` では読めないため取り込まない。必要に
   なったら Prefect に pdftotext+パーサの load タスクを足す（現状スコープ外）。
@@ -30,9 +36,9 @@ docker compose で構築する。全体像は `docs/architecture.md`、raw 層�
   URL 付き通知。`upload_report_to_s3` / `send_slack_notification` は finance-lake の
   `fetch_documents.py` と同実装（失敗はログのみ、`unfurl` 無効）。dbt 失敗時も
   レポート/S3/Slack まで実行してから非ゼロ終了する。
-  レポートに載せる行数は `raw__edinet_document_index`（~11秒）と `raw__jpx_file_catalog`
-  （~1秒）のみ。`raw__edinet_csv_facts` の `count(*)` は実測 **約12分**（実機、全量）
-  なので含めない（`docs/fdw_raw_layer_design.md`「既知の制約」）。
+  レポートに載せる行数は cleansed の native テーブル（`cleansed__edinet__documents` /
+  `cleansed__edinet__facts`）と `raw__jpx_file_catalog`（~1秒）。FDW の
+  `raw__edinet_csv_facts`（約12分）・`raw__edinet_document_index`（約11秒）は直接数えない。
 
 ## 依存
 
@@ -59,8 +65,12 @@ finance-lake-shutdown.service` の `After=` に `finance-dwh-transform.service` 
 
 ## 現状（2026-09-11 時点）
 
-- 実装済み: raw 層（外部テーブル3 + ラッパー3 + pytest）、dbt source 定義、Prefect フロー
-  （レポート/S3/Slack）、docker compose、systemd 3 unit、GitHub Actions 4 本。
-- ローカルでレイクのサンプルに対し pytest / mypy --strict / フルフロー緑。
-- 未了: GitHub リポジトリ作成 + Secrets、Mac Mini 初回セットアップ、finance-lake の
-  shutdown unit 追記、cleansed / mart の設計。
+- 実装・デプロイ済み: raw 層（外部テーブル3 + ラッパー3）、landing（edinet_csv_facts）+
+  `load_edinet` タスク、cleansed（edinet__documents / edinet__facts incremental）、
+  Prefect フロー（load → dbt → レポート/S3/Slack）、docker compose、systemd 3 unit、
+  GitHub Actions 4 本、GitHub リポジトリ（public）、Mac Mini（systemd 登録済み、
+  raw 層まで実機動作確認済み）、finance-lake の shutdown unit 追記。
+- ローカルでレイクの実構造サンプルに対し pytest / mypy --strict / フルフロー（incremental
+  含む）緑。
+- 未了: Mac Mini で landing の初回バックフィル（全 ~459 日、実質 ~30〜45分。通電枠外で
+  手動実施）、jpx / mart の設計。

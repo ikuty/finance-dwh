@@ -12,5 +12,13 @@ test-paths: ["tests"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
-# 現状は raw（file_fdw の外部テーブルへの source 定義）のみ。
-# cleansed / mart は利用用途が固まってから設計する（当面はモデルを置かない）。
+models:
+  finance_dwh:
+    cleansed:
+      +schema: cleansed
+
+# raw   : file_fdw 外部テーブルへの source 定義（models/raw/_raw__sources.yml）
+# landing: 日付単位 load で作る native テーブル（Prefect の load_edinet が管理、
+#          models/cleansed/_cleansed__sources.yml で source 宣言）
+# cleansed: landing / raw から型付け・名寄せする dbt モデル
+# mart   : 利用用途が固まってから

@@ -1,0 +1,17 @@
+version: 2
+
+sources:
+  - name: landing
+    schema: landing
+    description: >
+      日付単位 load（Prefect の load_edinet）が作る native テーブル。file_fdw の
+      全量スキャン（実測 約12分）を避けるため、edinet_csv_fdw.py --date で 1 日ぶんずつ
+      抽出して COPY したもの。dbt はこれを incremental の材料にする。
+    tables:
+      - name: edinet_csv_facts
+        description: "EDINET CSV 明細（縦持ち、全列 text）。file_date にインデックス。"
+        columns:
+          - name: file_date
+            description: "書類提出日 'YYYY-MM-DD'。"
+      - name: edinet_csv_facts_load_log
+        description: "日付ごとの取り込み記録（file_date PK・row_count・loaded_at）。"

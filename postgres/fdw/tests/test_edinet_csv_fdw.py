@@ -153,6 +153,34 @@ def test_run_skips_corrupt_gz_without_aborting(tmp_path: Path) -> None:
     assert fw.rows[0][-1] == "1"
 
 
+def test_iter_csv_files_date_filter_scopes_to_one_day(tmp_path: Path) -> None:
+    write_csv_gz(csv_path(tmp_path, "2026-09-01", "E1", "D1", "a"), [])
+    write_csv_gz(csv_path(tmp_path, "2026-09-02", "E1", "D2", "b"), [])
+    write_csv_gz(csv_path(tmp_path, "2025-06-10", "E1", "D3", "c"), [])
+
+    found = list(m.iter_csv_files(tmp_path, "2026-09-02"))
+    assert [p.name for p in found] == ["b.csv.gz"]
+
+
+def test_run_date_filter_emits_only_that_day(tmp_path: Path) -> None:
+    write_csv_gz(
+        csv_path(tmp_path, "2026-09-01", "E1", "D1", "a"),
+        [["e1", "n", "c", "y", "連結", "期間", "JPY", "円", "1"]],
+    )
+    write_csv_gz(
+        csv_path(tmp_path, "2026-09-02", "E1", "D2", "b"),
+        [["e2", "n", "c", "y", "連結", "期間", "JPY", "円", "2"]],
+    )
+    fw = FakeWriter()
+    m.run(tmp_path, fw, "2026-09-02")
+    assert [(r[0], r[-1]) for r in fw.rows] == [("2026-09-02", "2")]
+
+
+def test_main_rejects_malformed_date(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        m.main(["edinet_csv_fdw.py", str(tmp_path), "--date", "2026-9-2"])
+
+
 def test_iter_csv_files_only_matches_csv_gz_in_order(tmp_path: Path) -> None:
     write_csv_gz(csv_path(tmp_path, "2026-08-13", "E00011", "D1", "z"), [])
     write_csv_gz(csv_path(tmp_path, "2026-08-13", "E00011", "D1", "a"), [])

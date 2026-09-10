@@ -11,6 +11,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY dbt/ /app/dbt/
 COPY transform/flows/ /app/flows/
 COPY transform/report/ /app/report/
+# landing への日付単位 load で使う（postgres イメージと同じラッパー）
+COPY postgres/fdw/edinet_csv_fdw.py /app/fdw/edinet_csv_fdw.py
 
 ENV DBT_PROJECT_DIR=/app/dbt \
     DBT_PROFILES_DIR=/app/dbt \

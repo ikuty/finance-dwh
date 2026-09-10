@@ -15,19 +15,22 @@ dbt Core / Prefect / docker compose / GitHub Actions）はレイヤ全体方針�
   `raw.raw__*` として読む。書き込みは一切しない（ro マウントで物理的に保証）。
 - レイクの取得ジョブと DWH の変換ジョブは、別リポジトリ・別コンテナ・別スケジュール。
 
-## 3 層
+## 層
 
 | 層 | スキーマ | 実体 | 現状 |
 |---|---|---|---|
 | raw | `raw` | `file_fdw` 外部テーブル（`initdb/02_fdw.sql` が作成）。全列 text、生データに忠実 | **実装済み** |
-| cleansed | `cleansed` | dbt モデル（型付け・名寄せ） | **未設計**（利用用途が固まってから） |
+| landing | `landing` | 日付単位 load で作る native テーブル（`file_fdw` の全量スキャン回避用）。Prefect の `load_edinet` が管理 | **edinet_csv_facts のみ** |
+| cleansed | `cleansed` | dbt モデル（型付け・名寄せ） | **edinet__documents / edinet__facts のみ**（後者は incremental） |
 | mart | `mart` | dbt モデル（業務エンティティ） | **未設計** |
 
 - 命名: 全リレーションにスキーマ名を prefix（`raw.raw__edinet_csv_facts` /
-  `cleansed.cleansed__...`）。mart のみ prefix 無し。
-- dbt は現状 `models/raw/_raw__sources.yml` の **source 定義のみ**。モデルは 0 個。
-  `dbt build` は「Nothing to do」。cleansed 実装が入ったら
-  `macros/generate_schema_name.sql`（接頭辞なしスキーマ名）が効く。
+  `cleansed.cleansed__...`）。landing / mart は prefix 無し。
+- `file_fdw` は述語プッシュダウン不可で `count(*)` すら全量スキャン（実測: EDINET CSV は
+  約12分）。そのため **edinet_csv_facts は FDW を「日付指定の抽出専用」に格下げし、
+  `landing.edinet_csv_facts`（native）を挟んで cleansed を incremental で作る**
+  （`fdw_raw_layer_design.md`）。jpx（1秒）・doc index（11秒）は当面 FDW 直読み。
+- `macros/generate_schema_name.sql` で `cleansed` を接頭辞なしスキーマに出す。
 
 ## raw 層の内容
 

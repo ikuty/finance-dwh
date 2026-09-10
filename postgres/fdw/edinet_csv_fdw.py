@@ -16,7 +16,11 @@
     period_instant, unit_id, unit, value
 
 使い方:
-    python3 edinet_csv_fdw.py [LAKE_ROOT]   # LAKE_ROOT 既定は /lake
+    python3 edinet_csv_fdw.py [LAKE_ROOT]                # 全期間（file_fdw から使われる形）
+    python3 edinet_csv_fdw.py [LAKE_ROOT] --date 2026-09-10   # その日だけ（landing への load 用）
+
+`--date` を付けると走査を `raw/{yyyy}/{mm}/{dd}/` 配下だけに絞る。file_fdw は述語プッシュ
+ダウン不可でフルスキャンが重いため、日付単位の取り込みはこの引数付きで呼び出す。
 
 破損ファイル（gzip でない・途中で切れている等）は stderr に警告を出して読み飛ばし、
 走査全体は止めない（1 ファイルの不整合で外部テーブル全体が読めなくなるのを避ける）。
@@ -24,8 +28,10 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import gzip
+import re
 import signal
 import sys
 from collections.abc import Iterator
@@ -33,6 +39,8 @@ from pathlib import Path
 from typing import Protocol
 
 DEFAULT_LAKE_ROOT = "/lake"
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # EDINET CSV の明細列数（要素ID/項目名/コンテキストID/相対年度/連結・個別/期間・時点/
 # ユニットID/単位/値）。
@@ -62,11 +70,19 @@ class RowWriter(Protocol):
     def writerow(self, row: list[str]) -> object: ...
 
 
-def iter_csv_files(lake_root: Path) -> Iterator[Path]:
-    """レイク配下の EDINET CSV(.csv.gz) をパス順に列挙する。"""
+def iter_csv_files(lake_root: Path, date: str | None = None) -> Iterator[Path]:
+    """レイク配下の EDINET CSV(.csv.gz) をパス順に列挙する。
+
+    date（'YYYY-MM-DD'）を渡すと raw/{yyyy}/{mm}/{dd}/ 配下だけに絞る。
+    """
     base = lake_root / "edinet-dl" / "raw"
     # {yyyy}/{mm}/{dd}/{edinetCode}/csv/{docID}/*.csv.gz
-    yield from sorted(base.glob("*/*/*/*/csv/*/*.csv.gz"))
+    if date is None:
+        pattern = "*/*/*/*/csv/*/*.csv.gz"
+    else:
+        yyyy, mm, dd = date.split("-")
+        pattern = f"{yyyy}/{mm}/{dd}/*/csv/*/*.csv.gz"
+    yield from sorted(base.glob(pattern))
 
 
 def provenance_from_path(path: Path, lake_root: Path) -> tuple[str, str, str]:
@@ -109,10 +125,10 @@ def iter_data_rows(path: Path) -> Iterator[list[str]]:
             yield normalize_row(row)
 
 
-def run(lake_root: Path, out: RowWriter) -> int:
+def run(lake_root: Path, out: RowWriter, date: str | None = None) -> int:
     """走査して out へ書き出す。戻り値は読み飛ばした破損ファイル数。"""
     skipped = 0
-    for path in iter_csv_files(lake_root):
+    for path in iter_csv_files(lake_root, date):
         try:
             file_date, edinet_code, doc_id = provenance_from_path(path, lake_root)
             for row in iter_data_rows(path):
@@ -132,12 +148,22 @@ def _restore_default_sigpipe() -> None:
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="EDINET CSV をレイクから平坦化して stdout へ")
+    parser.add_argument("lake_root", nargs="?", default=DEFAULT_LAKE_ROOT)
+    parser.add_argument("--date", help="'YYYY-MM-DD'。指定日だけを走査する")
+    args = parser.parse_args(argv[1:])
+    if args.date is not None and not _DATE_RE.match(args.date):
+        parser.error(f"--date は YYYY-MM-DD 形式で: {args.date!r}")
+    return args
+
+
 def main(argv: list[str]) -> int:
     _restore_default_sigpipe()
-    lake_root = Path(argv[1] if len(argv) > 1 else DEFAULT_LAKE_ROOT)
+    args = _parse_args(argv)
     writer = csv.writer(sys.stdout, quoting=csv.QUOTE_ALL, lineterminator="\n")
     try:
-        skipped = run(lake_root, writer)
+        skipped = run(Path(args.lake_root), writer, args.date)
     except BrokenPipeError:
         # 下流（例: `| head`）がパイプを閉じた。SIGPIPE 相当として静かに終わる。
         return 0
