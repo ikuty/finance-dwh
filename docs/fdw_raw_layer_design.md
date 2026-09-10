@@ -66,10 +66,19 @@ Python 製 FDW の `multicorn2` は述語プッシュダウンができるが、
 ## 既知の制約
 
 - **述語プッシュダウン不可**: `file_fdw` の `program` はクエリの条件を受け取れないため、
-  `SELECT` のたびにレイク全体を再走査する（インクリメンタル不可）。EDINET CSV 1 年分の
-  展開後サイズは数 GB 程度で、夜間 1 回のフルスキャンは許容範囲と判断。
-  - 回避策（夜間実行時間が問題化したら）: Prefect フローに「load」タスクを足し、
-    新規ぶんだけを native テーブルへ `COPY` して、以降はそれを source にする。
+  `SELECT`（`count(*)` 含む）のたびにレイク全体を再走査する（インクリメンタル不可、
+  `WHERE` も効かない）。
+  - **実測（2026-09-11、Mac Mini 2012 上、レイク全量）**:
+    - `raw__jpx_file_catalog` の `count(*)` … 9,961 行 / **約 1 秒**（`stat()` のみ）
+    - `raw__edinet_document_index` の `count(*)` … 162,701 行 / **約 11 秒**（983 JSON）
+    - `raw__edinet_csv_facts` の `count(*)` … 20,572,522 行 / **約 12 分**
+      （82,631 個の `.csv.gz` を毎回解凍・パース。レイクは日々増える）
+  - 対応: 日次フローの実行レポートは `raw__edinet_csv_facts` の `count(*)` を**含めない**
+    （doc index と jpx の件数＋最新データ問い合わせのみ。フロー全体で数十秒）。
+    CSV 明細の行数は手動 `psql` で数える。
+  - 回避策（cleansed を作る段階、または夜間実行時間が問題化したら）: Prefect フローに
+    「load」タスクを足し、新規ぶんだけを native テーブルへ `COPY` して、以降はそれを
+    source にする。
 - **SIGPIPE**: 下流（`file_fdw` / `| head`）が `LIMIT` 等で読み切らずにパイプを閉じると
   Python が `BrokenPipeError` で終了コード 120 になる。各ラッパーは `main()` 冒頭で
   `signal.signal(signal.SIGPIPE, SIG_DFL)` して素直に終了させる（実機で確認済みの不具合）。

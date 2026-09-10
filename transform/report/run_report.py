@@ -5,10 +5,13 @@
 
 内容:
   - 実行メタ情報（生成時刻 JST、dbt の PASS/WARN/ERROR/SKIP、所要秒、成否）
-  - raw の各外部テーブルの行数（= file_fdw 経由でレイクを読めているかの確認）
+  - raw の外部テーブルの行数（= file_fdw 経由でレイクを読めているかの確認）
   - 最新データ（EDINET の最新 file_date・会社数、JPX の最新 period・ファイル数）
 
 cleansed / mart は未設計（利用用途が固まってから）なので、いまは raw のみ集計する。
+`raw__edinet_csv_facts` の count(*) は含めない: file_fdw が 8 万超の gzip を毎回
+フルスキャンするため実測で約 12 分かかる（docs/fdw_raw_layer_design.md）。CSV 明細の
+行数が要るときは手動 psql で数える。
 """
 
 from __future__ import annotations
@@ -23,8 +26,8 @@ import psycopg2
 JST = datetime.timezone(datetime.timedelta(hours=9), name="JST")
 
 # 行数を出すテーブル（表示順）。存在しなければ件数欄は "-"。
+# raw__edinet_csv_facts は含めない（count(*) が約 12 分。上の docstring 参照）。
 COUNTED_RELATIONS: list[tuple[str, str]] = [
-    ("raw", "raw__edinet_csv_facts"),
     ("raw", "raw__edinet_document_index"),
     ("raw", "raw__jpx_file_catalog"),
 ]
@@ -197,12 +200,12 @@ def render_html(data: ReportData, dbt: DbtOutcome) -> str:
 
 def summary_text(data: ReportData, dbt: DbtOutcome) -> str:
     status = "✅ 成功" if dbt.ok else "❌ 失敗"
-    facts = next((n for _s, t, n in data.layer_counts if t == "raw__edinet_csv_facts"), None)
+    docs = next((n for _s, t, n in data.layer_counts if t == "raw__edinet_document_index"), None)
     company_n = _fmt_count(data.edinet_company_count)
     jpx_n = _fmt_count(data.jpx_file_count)
     return (
         f"{status} / finance-dwh 日次 / dbt {_dbt_phrase(dbt)} / "
-        f"raw: EDINET明細{_fmt_count(facts)}行・{company_n}社, JPX {jpx_n}ファイル"
+        f"raw: EDINET書類{_fmt_count(docs)}件・{company_n}社, JPX {jpx_n}ファイル"
     )
 
 

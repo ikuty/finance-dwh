@@ -25,11 +25,14 @@ docker compose で構築する。全体像は `docs/architecture.md`、raw 層�
 - **Prefect は ephemeral 実行**（常駐サーバ・ワーカーなし）。フロー `daily_transform` を
   `python -m flows.daily_transform` で単発実行。UI が要るようになったら通電枠限定の
   `prefect-server` compose サービスを後付け。
-- **実行レポート**: フローが `dbt build` の後に層別行数等の HTML を生成し、S3
-  （`ikuty-finance` バケット、キー `finance-dwh/run_report.html`、finance-lake と共用）へ
-  上げて Slack へ URL 付き通知。`upload_report_to_s3` / `send_slack_notification` は
-  finance-lake の `fetch_documents.py` と同実装（失敗はログのみ、`unfurl` 無効）。
-  dbt 失敗時もレポート/S3/Slack まで実行してから非ゼロ終了する。
+- **実行レポート**: フローが `dbt build` の後に HTML を生成し、S3（`ikuty-finance`
+  バケット、キー `finance-dwh/run_report.html`、finance-lake と共用）へ上げて Slack へ
+  URL 付き通知。`upload_report_to_s3` / `send_slack_notification` は finance-lake の
+  `fetch_documents.py` と同実装（失敗はログのみ、`unfurl` 無効）。dbt 失敗時も
+  レポート/S3/Slack まで実行してから非ゼロ終了する。
+  レポートに載せる行数は `raw__edinet_document_index`（~11秒）と `raw__jpx_file_catalog`
+  （~1秒）のみ。`raw__edinet_csv_facts` の `count(*)` は実測 **約12分**（実機、全量）
+  なので含めない（`docs/fdw_raw_layer_design.md`「既知の制約」）。
 
 ## 依存
 
