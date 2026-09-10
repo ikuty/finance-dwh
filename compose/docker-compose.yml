@@ -42,9 +42,17 @@ services:
       DBT_USER: "${POSTGRES_USER:-finance}"
       DBT_PASSWORD: "${POSTGRES_PASSWORD:-finance}"
       DBT_DBNAME: "${POSTGRES_DB:-finance_dwh}"
+      # レポート公開・通知（未設定なら該当ステップをスキップ）
+      S3_BUCKET_NAME: "${S3_BUCKET_NAME:-}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-1}"
+      SLACK_WEBHOOK_URL: "${SLACK_WEBHOOK_URL:-}"
     volumes:
-      # ローカル開発でモデルを編集→即再実行できるよう dbt プロジェクトを上書きマウント。
-      - ../dbt:/dbt
+      # ローカル開発でモデル・フローを編集→即再実行できるよう上書きマウント。
+      - ../dbt:/app/dbt
+      - ../transform/flows:/app/flows
+      - ../transform/report:/app/report
     depends_on:
       postgres:
         condition: service_healthy

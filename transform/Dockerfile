@@ -1,16 +1,24 @@
-# 変換ランナー。フェーズ1では dbt のみ（Prefect フロー・レポート・S3 はフェーズ2で追加）。
+# 変換ランナー。既定エントリポイントは Prefect フロー（daily_transform）。
+# 素の dbt を叩きたいときは `docker compose run --rm --entrypoint dbt transform <args>`。
 # ビルドコンテキストはリポジトリルート（compose の build.context: ..）。
 FROM python:3.12-slim
 
-WORKDIR /dbt
+WORKDIR /app
 
 COPY transform/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# dbt プロジェクト本体。ローカル開発では compose が ../dbt を /dbt に bind mount して上書きする。
-COPY dbt/ .
+COPY dbt/ /app/dbt/
+COPY transform/flows/ /app/flows/
+COPY transform/report/ /app/report/
 
-ENV DBT_PROFILES_DIR=/dbt
+ENV DBT_PROJECT_DIR=/app/dbt \
+    DBT_PROFILES_DIR=/app/dbt \
+    PREFECT_HOME=/tmp/prefect \
+    PREFECT_SERVER_ANALYTICS_ENABLED=false
 
-ENTRYPOINT ["dbt"]
-CMD ["build"]
+# Prefect の ephemeral サーバが状態を書く先。使い捨て（コンテナと共に消える）。
+# /root/.prefect も作る（block 自動登録が memo_store.toml をそこへ書こうとするため）。
+RUN mkdir -p /tmp/prefect /root/.prefect
+
+ENTRYPOINT ["python", "-m", "flows.daily_transform"]
