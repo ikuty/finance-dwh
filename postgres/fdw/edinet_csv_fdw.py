@@ -4,7 +4,7 @@
 オプションから起動され、外部テーブル `raw.raw__edinet_csv_facts` の実体となる。
 
 レイク上のパス:
-    {LAKE_ROOT}/edinet-dl/raw/{fileDate}/{edinetCode}/csv/{docID}/{name}.csv.gz
+    {LAKE_ROOT}/edinet-dl/raw/{yyyy}/{mm}/{dd}/{edinetCode}/csv/{docID}/{name}.csv.gz
 
 各 .csv.gz は EDINET CSV 仕様どおり「BOM 付き UTF-16LE・CRLF・タブ区切り・全フィールドを
 ダブルクォートで囲む・固定 9 列」。値にはテキストブロック（改行を含む長文）が入りうるため、
@@ -65,20 +65,23 @@ class RowWriter(Protocol):
 def iter_csv_files(lake_root: Path) -> Iterator[Path]:
     """レイク配下の EDINET CSV(.csv.gz) をパス順に列挙する。"""
     base = lake_root / "edinet-dl" / "raw"
-    yield from sorted(base.glob("*/*/csv/*/*.csv.gz"))
+    # {yyyy}/{mm}/{dd}/{edinetCode}/csv/{docID}/*.csv.gz
+    yield from sorted(base.glob("*/*/*/*/csv/*/*.csv.gz"))
 
 
 def provenance_from_path(path: Path, lake_root: Path) -> tuple[str, str, str]:
     """.csv.gz のパスから (file_date, edinet_code, doc_id) を取り出す。
 
-    期待するパス構造: {lake_root}/edinet-dl/raw/{fileDate}/{edinetCode}/csv/{docID}/{name}.csv.gz
+    期待するパス構造:
+        {lake_root}/edinet-dl/raw/{yyyy}/{mm}/{dd}/{edinetCode}/csv/{docID}/{name}.csv.gz
     """
     rel = path.relative_to(lake_root / "edinet-dl" / "raw")
     parts = rel.parts
-    # parts = (fileDate, edinetCode, "csv", docID, name.csv.gz)
-    if len(parts) != 5 or parts[2] != "csv":
+    # parts = (yyyy, mm, dd, edinetCode, "csv", docID, name.csv.gz)
+    if len(parts) != 7 or parts[4] != "csv":
         raise ValueError(f"想定外の CSV パス構造: {path}")
-    return parts[0], parts[1], parts[3]
+    file_date = f"{parts[0]}-{parts[1]}-{parts[2]}"
+    return file_date, parts[3], parts[5]
 
 
 def normalize_row(row: list[str]) -> list[str]:

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""レイクに保存された EDINET 書類一覧 API の生レスポンス（document_list_{date}.json）を
+"""レイクに保存された EDINET 書類一覧 API の生レスポンス（document_list.json）を
 走査し、全 results[] レコードを 1 つの CSV ストリーム（stdout）に平坦化する。
 PostgreSQL の file_fdw の `program` オプションから起動され、外部テーブル
 `raw.raw__edinet_document_index` の実体となる。
 
-レイク上のパス:
-    {LAKE_ROOT}/edinet-dl/raw/response/document_list_{YYYY-MM-DD}.json
+レイク上のパス（日付はパス階層、ファイル名は固定）:
+    {LAKE_ROOT}/edinet-dl/raw/response/{yyyy}/{mm}/{dd}/document_list.json
 
 各ファイルは `{"metadata": {...}, "results": [ {...29 キー...}, ... ]}`。results[] の
 キー集合は固定で、値は文字列・null・（seqNumber のみ）整数。null は空文字にする。
@@ -32,7 +32,7 @@ from typing import Protocol
 
 DEFAULT_LAKE_ROOT = "/lake"
 
-_FILENAME_RE = re.compile(r"^document_list_(\d{4}-\d{2}-\d{2})\.json$")
+_DATE_PART_RE = re.compile(r"^\d{2,4}$")
 
 # results[] レコードのキー（EDINET API の並び）。この順で値を取り出す。
 RESULT_KEYS = [
@@ -109,17 +109,18 @@ class RowWriter(Protocol):
 
 
 def iter_response_files(lake_root: Path) -> Iterator[Path]:
-    """レイク配下の document_list_*.json をファイル名順に列挙する。"""
+    """レイク配下の response/{yyyy}/{mm}/{dd}/document_list.json をパス順に列挙する。"""
     base = lake_root / "edinet-dl" / "raw" / "response"
-    yield from sorted(base.glob("document_list_*.json"))
+    yield from sorted(base.glob("*/*/*/document_list.json"))
 
 
 def file_date_from_path(path: Path) -> str:
-    """document_list_{YYYY-MM-DD}.json のファイル名から日付文字列を取り出す。"""
-    match = _FILENAME_RE.match(path.name)
-    if match is None:
-        raise ValueError(f"想定外のレスポンスファイル名: {path.name}")
-    return match.group(1)
+    """response/{yyyy}/{mm}/{dd}/document_list.json のパス階層から日付文字列を作る。"""
+    parts = path.parent.parts[-3:]
+    if len(parts) != 3 or not all(_DATE_PART_RE.match(p) for p in parts):
+        raise ValueError(f"想定外のレスポンスパス: {path}")
+    yyyy, mm, dd = parts
+    return f"{yyyy}-{mm}-{dd}"
 
 
 def _cell(value: object) -> str:

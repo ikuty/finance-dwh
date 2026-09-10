@@ -31,7 +31,8 @@ Python 製 FDW の `multicorn2` は述語プッシュダウンができるが、
 
 ### `raw__edinet_csv_facts` ← `edinet_csv_fdw.py`
 
-- 走査対象: `/lake/edinet-dl/raw/{fileDate}/{edinetCode}/csv/{docID}/*.csv.gz`
+- 走査対象: `/lake/edinet-dl/raw/{yyyy}/{mm}/{dd}/{edinetCode}/csv/{docID}/*.csv.gz`
+  （file_date は `{yyyy}-{mm}-{dd}` として再構成する）
 - 各 `.csv.gz`: **BOM 付き UTF-16LE・CRLF・タブ区切り・全フィールドをダブルクォート・固定 9 列**
   （要素ID / 項目名 / コンテキストID / 相対年度 / 連結・個別 / 期間・時点 / ユニットID / 単位 / 値）。
 - 値にテキストブロック（改行入りの長文）が入りうるので `csv` モジュールでパースし、
@@ -41,9 +42,10 @@ Python 製 FDW の `multicorn2` は述語プッシュダウンができるが、
 
 ### `raw__edinet_document_index` ← `edinet_docindex_fdw.py`
 
-- 走査対象: `/lake/edinet-dl/raw/response/document_list_{YYYY-MM-DD}.json`
+- 走査対象: `/lake/edinet-dl/raw/response/{yyyy}/{mm}/{dd}/document_list.json`
+  （ファイル名は常に `document_list.json`。file_date はパス階層 `{yyyy}/{mm}/{dd}` から）
 - `{"metadata":..., "results":[ {...29 キー固定...} ]}` の `results[]` を 1 行ずつ、
-  キー順に snake_case 列へ。null は空文字。file_date はファイル名から。
+  キー順に snake_case 列へ。null は空文字。
 
 ### `raw__jpx_file_catalog` ← `jpx_catalog_fdw.py`
 

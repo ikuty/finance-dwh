@@ -1,4 +1,5 @@
-"""edinet_docindex_fdw.py の単体テスト。合成の document_list_*.json フィクスチャで
+"""edinet_docindex_fdw.py の単体テスト。合成の
+response/{yyyy}/{mm}/{dd}/document_list.json フィクスチャで
 走査・file_date 抽出・null の空文字化・列順を検証する。"""
 
 from __future__ import annotations
@@ -28,21 +29,24 @@ def write_response(path: Path, records: list[dict[str, object]] | None) -> None:
 
 
 def response_path(lake: Path, date: str) -> Path:
-    return lake / "edinet-dl" / "raw" / "response" / f"document_list_{date}.json"
+    """date は 'YYYY-MM-DD'。実レイクは raw/response/{yyyy}/{mm}/{dd}/document_list.json。"""
+    yyyy, mm, dd = date.split("-")
+    return lake / "edinet-dl" / "raw" / "response" / yyyy / mm / dd / "document_list.json"
 
 
 # --- file_date_from_path ---------------------------------------------------
 
 
-def test_file_date_from_path_extracts_date() -> None:
-    assert m.file_date_from_path(Path("/x/document_list_2026-08-13.json")) == "2026-08-13"
+def test_file_date_from_path_extracts_date_from_path_segments() -> None:
+    p = Path("/lake/edinet-dl/raw/response/2026/08/13/document_list.json")
+    assert m.file_date_from_path(p) == "2026-08-13"
 
 
-def test_file_date_from_path_rejects_other_names() -> None:
+def test_file_date_from_path_rejects_unexpected_structure() -> None:
     with pytest.raises(ValueError):
-        m.file_date_from_path(Path("/x/document_list_2026-8-13.json"))
+        m.file_date_from_path(Path("/x/response/2026/aug/13/document_list.json"))
     with pytest.raises(ValueError):
-        m.file_date_from_path(Path("/x/something_else.json"))
+        m.file_date_from_path(Path("/x/document_list.json"))
 
 
 # --- _cell ---------------------------------------------------------------
@@ -125,9 +129,10 @@ def test_run_skips_corrupt_json_without_aborting(tmp_path: Path) -> None:
 
 def test_iter_response_files_matches_only_document_list_json_sorted(tmp_path: Path) -> None:
     base = tmp_path / "edinet-dl" / "raw" / "response"
-    write_response(tmp_path / "edinet-dl" / "raw" / "response" / "document_list_2026-08-14.json", [])
-    write_response(tmp_path / "edinet-dl" / "raw" / "response" / "document_list_2026-08-13.json", [])
-    (base / "notes.txt").write_text("x", encoding="utf-8")
+    write_response(response_path(tmp_path, "2026-08-14"), [])
+    write_response(response_path(tmp_path, "2026-08-13"), [])
+    (base / "2026" / "08" / "13" / "notes.txt").write_text("x", encoding="utf-8")
 
-    found = [p.name for p in m.iter_response_files(tmp_path)]
-    assert found == ["document_list_2026-08-13.json", "document_list_2026-08-14.json"]
+    found = list(m.iter_response_files(tmp_path))
+    assert all(p.name == "document_list.json" for p in found)
+    assert [m.file_date_from_path(p) for p in found] == ["2026-08-13", "2026-08-14"]

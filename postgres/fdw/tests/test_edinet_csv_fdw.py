@@ -40,7 +40,9 @@ def write_csv_gz(path: Path, data_rows: list[list[str]]) -> None:
 
 
 def csv_path(lake: Path, date: str, ec: str, doc: str, name: str) -> Path:
-    return lake / "edinet-dl" / "raw" / date / ec / "csv" / doc / f"{name}.csv.gz"
+    """date は 'YYYY-MM-DD'。実レイクは raw/{yyyy}/{mm}/{dd}/{ec}/csv/{doc}/*.csv.gz。"""
+    yyyy, mm, dd = date.split("-")
+    return lake / "edinet-dl" / "raw" / yyyy / mm / dd / ec / "csv" / doc / f"{name}.csv.gz"
 
 
 class FakeWriter:
@@ -61,7 +63,7 @@ def test_provenance_from_path_extracts_date_ec_doc(tmp_path: Path) -> None:
 
 
 def test_provenance_from_path_rejects_unexpected_structure(tmp_path: Path) -> None:
-    bad = tmp_path / "edinet-dl" / "raw" / "2026-08-13" / "E00011" / "pdf" / "S1.pdf"
+    bad = tmp_path / "edinet-dl" / "raw" / "2026" / "08" / "13" / "E00011" / "pdf" / "S1.pdf"
     with pytest.raises(ValueError):
         m.provenance_from_path(bad, tmp_path)
 
@@ -154,8 +156,9 @@ def test_run_skips_corrupt_gz_without_aborting(tmp_path: Path) -> None:
 def test_iter_csv_files_only_matches_csv_gz_in_order(tmp_path: Path) -> None:
     write_csv_gz(csv_path(tmp_path, "2026-08-13", "E00011", "D1", "z"), [])
     write_csv_gz(csv_path(tmp_path, "2026-08-13", "E00011", "D1", "a"), [])
-    (tmp_path / "edinet-dl" / "raw" / "2026-08-13" / "E00011" / "pdf").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "edinet-dl" / "raw" / "2026-08-13" / "E00011" / "pdf" / "S1.pdf").write_bytes(b"x")
+    pdf_dir = tmp_path / "edinet-dl" / "raw" / "2026" / "08" / "13" / "E00011" / "pdf"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    (pdf_dir / "S1.pdf").write_bytes(b"x")
 
     found = list(m.iter_csv_files(tmp_path))
     assert [p.name for p in found] == ["a.csv.gz", "z.csv.gz"]
