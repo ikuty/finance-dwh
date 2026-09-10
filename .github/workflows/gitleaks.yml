@@ -1,0 +1,21 @@
+name: Gitleaks
+
+# 設計: docs/deployment_design.md「秘密情報の継続的なチェック（gitleaks）」
+# main への push で実行。公開リポジトリなら無料で動作し、追加の認証情報は不要
+# （private の場合は GITLEAKS_LICENSE が必要）。過去履歴の遡及スキャンは行わない。
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

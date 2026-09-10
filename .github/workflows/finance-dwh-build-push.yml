@@ -1,0 +1,51 @@
+name: finance-dwh - Build and push images
+
+# 設計: docs/deployment_design.md
+# main への push で自動実行（Mac Mini の稼働状態に依存しない）。
+# postgres（file_fdw の raw 層）と transform（dbt + Prefect フロー）の 2 イメージを
+# ghcr.io へ push する。Mac Mini への反映は finance-dwh-deploy.yml（手動）で行う。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "postgres/**"
+      - "transform/**"
+      - "dbt/**"
+      - ".github/workflows/finance-dwh-build-push.yml"
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push postgres image
+        uses: docker/build-push-action@v6
+        with:
+          context: postgres
+          file: postgres/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/finance-dwh-postgres:latest
+
+      - name: Build and push transform image
+        uses: docker/build-push-action@v6
+        with:
+          # transform/Dockerfile は dbt/ と transform/ をコピーするためコンテキストはリポジトリルート
+          context: .
+          file: transform/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/finance-dwh-transform:latest
+
+# パッケージは公開リポジトリに紐づけば GITHUB_TOKEN の push 時点で自動的に Public になる
+# （edinet-dl / jpx-daily-pdf-dl で実機確認済み）。private リポジトリの場合は Mac Mini 側で
+# `docker login ghcr.io` が必要。

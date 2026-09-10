@@ -1,0 +1,50 @@
+name: finance-dwh - Deploy to Mac Mini
+
+# 設計: docs/deployment_design.md
+# workflow_dispatch による手動トリガーのみ。Mac Mini は電源スケジュールで稼働時間が
+# 限られているため、電源投入・Tailscale 経由での到達性をユーザーが確認してから実行する。
+#
+# Secrets は finance-lake の deploy と同種（別リポジトリなので登録は別途必要）:
+#   TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET  … Tailscale OAuth クライアント（tags: tag:ci）
+#   SSH_PRIVATE_KEY                        … Mac Mini への SSH 秘密鍵
+#   MAC_MINI_HOST / MAC_MINI_USER          … Tailscale ホスト名 / SSH ユーザー名（= ikuty）
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Connect to tailnet
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Pull images and sync repo checkout on Mac Mini
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.MAC_MINI_HOST }}
+          username: ${{ secrets.MAC_MINI_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # compose / systemd はレジストリ接頭辞の無いローカルタグ
+          # （finance-dwh-postgres:latest / finance-dwh-transform:latest）を参照するため、
+          # pull 後に同じタグへ付け替える（edinet-dl で実機確認済みの同種の不具合対策）。
+          # git pull も併せて行い、Mac Mini 上の compose ファイル・systemd unit テンプレート・
+          # 使い捨てスクリプトを最新に保つ（detached HEAD にはせず main のまま fast-forward）。
+          script: |
+            cd /home/${{ secrets.MAC_MINI_USER }}/finance-dwh
+            git checkout main
+            git pull origin main
+            for img in finance-dwh-postgres finance-dwh-transform; do
+              docker pull ghcr.io/${{ github.repository_owner }}/$img:latest
+              docker tag ghcr.io/${{ github.repository_owner }}/$img:latest $img:latest
+            done
+
+# 反映タイミング:
+#   - transform: docker compose run --rm 方式のため、次回の systemd タイマー実行から新イメージ。
+#   - postgres:  次回起動時に finance-dwh-postgres.service が `docker compose up -d` で
+#     イメージ差分を検知して再作成する。即時反映したい場合は
+#     `sudo systemctl restart finance-dwh-postgres.service`（DB が一時的に停止する点に注意）。

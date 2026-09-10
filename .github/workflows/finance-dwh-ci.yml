@@ -1,0 +1,43 @@
+name: finance-dwh - CI
+
+# push（main）と pull_request で実行。Mac Mini には依存しない。
+# 現状は raw 層のみ（dbt はモデル無し・source 定義のみ）なので、
+#   - postgres/fdw と transform の Python を mypy --strict + pytest
+#   - dbt プロジェクトを dbt parse で構造検証（DB 接続はしない）
+# cleansed モデルが入ったら、ここに postgres サービスコンテナ + dbt build を足す。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dev deps
+        run: pip install -r requirements-dev.txt
+
+      - name: mypy --strict
+        run: mypy
+
+      - name: pytest
+        run: pytest -q
+
+      - name: dbt parse
+        working-directory: dbt
+        env:
+          DBT_TARGET: ci
+          DBT_HOST: localhost
+          DBT_PASSWORD: unused
+        run: dbt parse --no-partial-parse --profiles-dir .

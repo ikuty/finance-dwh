@@ -1,0 +1,24 @@
+# Mac Miniホスト（Ubuntu 24.04 LTS）に配置する systemd ユニットの例。
+# /etc/systemd/system/finance-dwh-transform.timer にコピーする
+# （finance-dwh-transform.service と対で使う）。
+#
+# 04:01:45 JST に発火。finance-lake のタイマー
+# （jpx-daily-pdf-dl 04:01:00 / edinet-dl 04:01:30）より後、共有シャットダウンの
+# タイマー（finance-lake-shutdown 04:02:00）より前に置く。
+#   - lake のタイマーより後にするのは、遅延起動時に取得ジョブより先に発火して
+#     After= が「待つ相手が居ない」と誤認するのを避けるため。
+#   - shutdown のタイマーより前にするのは、shutdown 側の After= がこのサービスを
+#     「実行中」と認識して待てるようにするため。
+#
+# マシンのシステムタイムゾーンは UTC だが、Tapo の電源投入時刻は JST 管理なので
+# OnCalendar にも明示的に Asia/Tokyo を指定する。
+
+[Unit]
+Description=Run finance-dwh daily transform
+
+[Timer]
+OnCalendar=*-*-* 04:01:45 Asia/Tokyo
+Persistent=true
+
+[Install]
+WantedBy=timers.target

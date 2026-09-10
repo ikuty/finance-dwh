@@ -1,0 +1,17 @@
+# transform イメージ（ビルドコンテキスト = リポジトリルート）に不要なものを除外する。
+.git
+.venv
+data
+dbt/target
+dbt/logs
+dbt/.user.yml
+**/__pycache__
+.mypy_cache
+.pytest_cache
+.ruff_cache
+compose/.env
+*.env
+docs
+systemd
+.github
+*.md
