@@ -1,0 +1,8 @@
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["postgres/fdw", "transform"]
+
+[tool.pytest.ini_options]
+testpaths = ["postgres/fdw/tests", "transform/tests"]
+pythonpath = ["postgres/fdw", "transform"]

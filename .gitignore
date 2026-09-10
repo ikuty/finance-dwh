@@ -1,0 +1,24 @@
+.env
+.env.local
+*.env
+
+# Postgres データディレクトリ・生成物（regenerable, Mac Miniの/home配下HDDに置く）
+data/
+
+# dbt の生成物
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml
+
+# Prefect のローカル状態
+.prefect/
+
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.venv/
+.ruff_cache/
+
+.DS_Store

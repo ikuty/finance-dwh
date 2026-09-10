@@ -1,0 +1,25 @@
+# dbt の接続プロファイル。`dbt --profiles-dir dbt ...` で参照する。
+# 値はすべて環境変数から。prod(Mac Mini) と ci(GitHub Actions の postgres サービス)。
+finance_dwh:
+  target: "{{ env_var('DBT_TARGET', 'prod') }}"
+  outputs:
+    prod:
+      type: postgres
+      host: "{{ env_var('DBT_HOST', 'postgres') }}"
+      port: "{{ env_var('DBT_PORT', '5432') | as_number }}"
+      user: "{{ env_var('DBT_USER', 'finance') }}"
+      password: "{{ env_var('DBT_PASSWORD') }}"
+      dbname: "{{ env_var('DBT_DBNAME', 'finance_dwh') }}"
+      schema: public
+      threads: 4
+      sslmode: disable
+    ci:
+      type: postgres
+      host: "{{ env_var('DBT_HOST', 'localhost') }}"
+      port: "{{ env_var('DBT_PORT', '5432') | as_number }}"
+      user: "{{ env_var('DBT_USER', 'postgres') }}"
+      password: "{{ env_var('DBT_PASSWORD', 'postgres') }}"
+      dbname: "{{ env_var('DBT_DBNAME', 'finance_dwh') }}"
+      schema: public
+      threads: 4
+      sslmode: disable

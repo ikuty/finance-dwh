@@ -1,0 +1,18 @@
+version: 2
+
+models:
+  - name: mart_company
+    description: "企業ディメンション（最新書類の属性 + 書類数）。"
+    columns:
+      - name: edinet_code
+        data_tests: [not_null, unique]
+
+  - name: mart_financial_facts
+    description: "採用要素に絞った財務ファクト（縦持ち）。企業名付き。"
+    columns:
+      - name: edinet_code
+        data_tests: [not_null]
+      - name: metric_name
+        data_tests: [not_null]
+      - name: element_id
+        data_tests: [not_null]

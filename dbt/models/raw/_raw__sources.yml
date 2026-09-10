@@ -1,0 +1,32 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    description: >
+      レイク(finance-lake)のファイルツリーを PostgreSQL の file_fdw で接続した外部テーブル群。
+      実体は postgres/fdw/*.py（Python ラッパー）。全列 text で、型付けは cleansed 層で行う。
+      file_fdw は述語プッシュダウン不可のため、これらを直接 SELECT するとレイク全体を
+      再走査する。cleansed 以降の材料としてのみ使うこと。
+    tables:
+      - name: edinet_csv_facts
+        description: "EDINET CSV(type=5) 全書類の明細（縦持ち）。provenance 3列 + EDINET CSV 9列。"
+        columns:
+          - name: file_date
+            description: "書類提出日（レイクの日付ディレクトリ名）。"
+          - name: edinet_code
+            description: "提出者の EDINET コード。"
+          - name: doc_id
+            description: "書類ID。"
+      - name: edinet_document_index
+        description: "書類一覧API の生レスポンス results[]（1行=1書類、29項目 + file_date）。"
+        columns:
+          - name: doc_id
+            description: "書類ID。"
+          - name: sec_code
+            description: "証券コード（5桁）。上場会社以外は空。"
+      - name: jpx_file_catalog
+        description: "JPX 相場表 PDF/TIFF のファイル目録（内容は含まない）。"
+        columns:
+          - name: relative_path
+            description: "レイクルートからの相対パス。"

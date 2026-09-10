@@ -1,0 +1,30 @@
+name: finance_dwh
+version: "1.0.0"
+config-version: 2
+profile: finance_dwh
+
+require-dbt-version: [">=1.8.0", "<2.0.0"]
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  finance_dwh:
+    cleansed:
+      +schema: cleansed
+      +materialized: view
+    mart:
+      +schema: mart
+      +materialized: table
+
+seeds:
+  finance_dwh:
+    +schema: mart
+    element_whitelist:
+      +column_types:
+        element_id: text
+        metric_name: text
