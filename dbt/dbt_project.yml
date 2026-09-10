@@ -12,19 +12,5 @@ test-paths: ["tests"]
 target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
-models:
-  finance_dwh:
-    cleansed:
-      +schema: cleansed
-      +materialized: view
-    mart:
-      +schema: mart
-      +materialized: table
-
-seeds:
-  finance_dwh:
-    +schema: mart
-    element_whitelist:
-      +column_types:
-        element_id: text
-        metric_name: text
+# 現状は raw（file_fdw の外部テーブルへの source 定義）のみ。
+# cleansed / mart は利用用途が固まってから設計する（当面はモデルを置かない）。

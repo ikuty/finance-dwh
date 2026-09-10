@@ -5,8 +5,10 @@
 
 内容:
   - 実行メタ情報（生成時刻 JST、dbt の PASS/WARN/ERROR/SKIP、所要秒、成否）
-  - 層別の行数（raw / cleansed / mart の各テーブル）
-  - 最新データ（EDINET の最新 file_date・会社数、JPX の最新 period_date・ファイル数）
+  - raw の各外部テーブルの行数（= file_fdw 経由でレイクを読めているかの確認）
+  - 最新データ（EDINET の最新 file_date・会社数、JPX の最新 period・ファイル数）
+
+cleansed / mart は未設計（利用用途が固まってから）なので、いまは raw のみ集計する。
 """
 
 from __future__ import annotations
@@ -25,11 +27,6 @@ COUNTED_RELATIONS: list[tuple[str, str]] = [
     ("raw", "raw__edinet_csv_facts"),
     ("raw", "raw__edinet_document_index"),
     ("raw", "raw__jpx_file_catalog"),
-    ("cleansed", "cleansed__edinet__documents"),
-    ("cleansed", "cleansed__edinet__facts"),
-    ("cleansed", "cleansed__jpx__files"),
-    ("mart", "mart_company"),
-    ("mart", "mart_financial_facts"),
 ]
 
 
@@ -111,11 +108,11 @@ def collect_report_data(conn: DbConn) -> ReportData:
         edinet_latest, edinet_companies = _scalar_pair(
             cur,
             "select max(file_date), count(distinct edinet_code) "
-            'from "cleansed"."cleansed__edinet__documents"',
+            "from \"raw\".\"raw__edinet_document_index\" where sec_code <> ''",
         )
         jpx_latest, jpx_files = _scalar_pair(
             cur,
-            'select max(period_date), count(*) from "cleansed"."cleansed__jpx__files"',
+            'select max(period), count(*) from "raw"."raw__jpx_file_catalog"',
         )
     return ReportData(
         generated_at=datetime.datetime.now(JST),
@@ -129,6 +126,13 @@ def collect_report_data(conn: DbConn) -> ReportData:
 
 def _fmt_count(n: int | None) -> str:
     return "-" if n is None else f"{n:,}"
+
+
+def _dbt_phrase(dbt: DbtOutcome) -> str:
+    """dbt の結果を短い文言に。モデル未定義（raw のみ）の間は件数を出さない。"""
+    if dbt.passed == dbt.warned == dbt.errored == dbt.skipped == 0:
+        return "モデル未定義（raw のみ）"
+    return f"PASS={dbt.passed} WARN={dbt.warned} ERROR={dbt.errored} SKIP={dbt.skipped}"
 
 
 def render_html(data: ReportData, dbt: DbtOutcome) -> str:
@@ -173,7 +177,7 @@ def render_html(data: ReportData, dbt: DbtOutcome) -> str:
 <div class="meta">
   生成: {data.generated_at.strftime("%Y-%m-%d %H:%M:%S %Z")}<br>
   dbt: <span class="{status_class}">{status_text}</span>
-  &nbsp;PASS={dbt.passed} WARN={dbt.warned} ERROR={dbt.errored} SKIP={dbt.skipped}
+  &nbsp;{_dbt_phrase(dbt)}
   &nbsp;/ {dbt.duration_s:.1f}s
 </div>
 <h2>層別行数</h2>
@@ -193,12 +197,12 @@ def render_html(data: ReportData, dbt: DbtOutcome) -> str:
 
 def summary_text(data: ReportData, dbt: DbtOutcome) -> str:
     status = "✅ 成功" if dbt.ok else "❌ 失敗"
+    facts = next((n for _s, t, n in data.layer_counts if t == "raw__edinet_csv_facts"), None)
     company_n = _fmt_count(data.edinet_company_count)
-    facts = next((n for s, t, n in data.layer_counts if t == "mart_financial_facts"), None)
+    jpx_n = _fmt_count(data.jpx_file_count)
     return (
-        f"{status} / finance-dwh 日次変換 / "
-        f"dbt PASS={dbt.passed} WARN={dbt.warned} ERROR={dbt.errored} SKIP={dbt.skipped} / "
-        f"mart: {company_n}社・財務ファクト{_fmt_count(facts)}行"
+        f"{status} / finance-dwh 日次 / dbt {_dbt_phrase(dbt)} / "
+        f"raw: EDINET明細{_fmt_count(facts)}行・{company_n}社, JPX {jpx_n}ファイル"
     )
 
 

@@ -5,9 +5,9 @@ sources:
     schema: raw
     description: >
       レイク(finance-lake)のファイルツリーを PostgreSQL の file_fdw で接続した外部テーブル群。
-      実体は postgres/fdw/*.py（Python ラッパー）。全列 text で、型付けは cleansed 層で行う。
-      file_fdw は述語プッシュダウン不可のため、これらを直接 SELECT するとレイク全体を
-      再走査する。cleansed 以降の材料としてのみ使うこと。
+      実体は postgres/fdw/*.py（Python ラッパー）。全列 text（生データに忠実）。
+      file_fdw は述語プッシュダウン不可のため、直接 SELECT するとレイク全体を再走査する。
+      型付け・名寄せを行う cleansed 層は利用用途が固まってから設計する（現状は raw のみ）。
     tables:
       - name: raw__edinet_csv_facts
         description: "EDINET CSV(type=5) 全書類の明細（縦持ち）。provenance 3列 + EDINET CSV 9列。"
