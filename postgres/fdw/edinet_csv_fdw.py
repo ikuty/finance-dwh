@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """レイクの EDINET CSV（type=5、UTF-16LE・タブ区切り）を走査し、全書類の明細行を
 1つの CSV ストリーム（stdout）に平坦化する。PostgreSQL の file_fdw の `program`
-オプションから起動され、外部テーブル `raw.edinet_csv_facts` の実体となる。
+オプションから起動され、外部テーブル `raw.raw__edinet_csv_facts` の実体となる。
 
 レイク上のパス:
     {LAKE_ROOT}/edinet-dl/raw/{fileDate}/{edinetCode}/csv/{docID}/{name}.csv.gz

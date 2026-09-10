@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """レイクに保存された JPX 日次株式相場表 PDF/TIFF の**ファイル目録**を 1 つの CSV
 ストリーム（stdout）として出力する。PostgreSQL の file_fdw の `program` オプションから
-起動され、外部テーブル `raw.jpx_file_catalog` の実体となる。
+起動され、外部テーブル `raw.raw__jpx_file_catalog` の実体となる。
 
 JPX 分は PDF / スキャン画像（TIFF）であり内容は SQL で扱えないため、raw 層では
 「どのファイルがどの期間・形式で存在するか」の目録だけを提供する（内容抽出は対象外）。

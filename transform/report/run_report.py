@@ -22,12 +22,12 @@ JST = datetime.timezone(datetime.timedelta(hours=9), name="JST")
 
 # 行数を出すテーブル（表示順）。存在しなければ件数欄は "-"。
 COUNTED_RELATIONS: list[tuple[str, str]] = [
-    ("raw", "edinet_csv_facts"),
-    ("raw", "edinet_document_index"),
-    ("raw", "jpx_file_catalog"),
-    ("cleansed", "cleansed_edinet__documents"),
-    ("cleansed", "cleansed_edinet__facts"),
-    ("cleansed", "cleansed_jpx__files"),
+    ("raw", "raw__edinet_csv_facts"),
+    ("raw", "raw__edinet_document_index"),
+    ("raw", "raw__jpx_file_catalog"),
+    ("cleansed", "cleansed__edinet__documents"),
+    ("cleansed", "cleansed__edinet__facts"),
+    ("cleansed", "cleansed__jpx__files"),
     ("mart", "mart_company"),
     ("mart", "mart_financial_facts"),
 ]
@@ -111,11 +111,11 @@ def collect_report_data(conn: DbConn) -> ReportData:
         edinet_latest, edinet_companies = _scalar_pair(
             cur,
             "select max(file_date), count(distinct edinet_code) "
-            'from "cleansed"."cleansed_edinet__documents"',
+            'from "cleansed"."cleansed__edinet__documents"',
         )
         jpx_latest, jpx_files = _scalar_pair(
             cur,
-            'select max(period_date), count(*) from "cleansed"."cleansed_jpx__files"',
+            'select max(period_date), count(*) from "cleansed"."cleansed__jpx__files"',
         )
     return ReportData(
         generated_at=datetime.datetime.now(JST),

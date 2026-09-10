@@ -1,7 +1,7 @@
 -- 企業ディメンション。最新書類の属性 + 書類数。
 
 with docs as (
-    select * from {{ ref('cleansed_edinet__documents') }}
+    select * from {{ ref('cleansed__edinet__documents') }}
 ),
 
 latest as (

@@ -2,7 +2,7 @@
 -- 実日付 period_date を作る（月次は月初日）。
 
 with src as (
-    select * from {{ source('raw', 'jpx_file_catalog') }}
+    select * from {{ source('raw', 'raw__jpx_file_catalog') }}
 )
 
 select

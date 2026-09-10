@@ -2,7 +2,7 @@
 -- raw の FDW は欠損を空文字で返す（SQL NULL ではない）ため nullif で正規化する。
 
 with src as (
-    select * from {{ source('raw', 'edinet_document_index') }}
+    select * from {{ source('raw', 'raw__edinet_document_index') }}
 )
 
 select

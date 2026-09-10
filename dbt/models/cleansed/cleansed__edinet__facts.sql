@@ -1,4 +1,4 @@
--- EDINET CSV 明細の型付け版。書類（cleansed_edinet__documents）と結合して
+-- EDINET CSV 明細の型付け版。書類（cleansed__edinet__documents）と結合して
 -- 上場会社ぶんに絞り、同一データポイントは最新提出の書類の値だけを残す。
 --
 -- 連結/個別は EDINET CSV の「連結・個別」列をそのまま使う（EDINET が算出済み。
@@ -6,12 +6,12 @@
 -- 数値は「符号付き整数/小数だけ」の値のみ value_num に落とす（"－" 等は NULL）。
 
 with facts as (
-    select * from {{ source('raw', 'edinet_csv_facts') }}
+    select * from {{ source('raw', 'raw__edinet_csv_facts') }}
 ),
 
 docs as (
     select doc_id, sec_code, submit_date_time
-    from {{ ref('cleansed_edinet__documents') }}
+    from {{ ref('cleansed__edinet__documents') }}
 ),
 
 typed as (

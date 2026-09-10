@@ -60,12 +60,12 @@ def _outcome(ok: bool = True) -> DbtOutcome:
 
 def test_collect_report_data_counts_and_missing_relation() -> None:
     responses: dict[str, object] = {
-        'select count(*) from "raw"."edinet_csv_facts"': (41902,),
-        'select count(*) from "raw"."edinet_document_index"': (335,),
-        'select count(*) from "raw"."jpx_file_catalog"': (0,),
-        'select count(*) from "cleansed"."cleansed_edinet__documents"': (222,),
-        'select count(*) from "cleansed"."cleansed_edinet__facts"': (40740,),
-        'select count(*) from "cleansed"."cleansed_jpx__files"': (0,),
+        'select count(*) from "raw"."raw__edinet_csv_facts"': (41902,),
+        'select count(*) from "raw"."raw__edinet_document_index"': (335,),
+        'select count(*) from "raw"."raw__jpx_file_catalog"': (0,),
+        'select count(*) from "cleansed"."cleansed__edinet__documents"': (222,),
+        'select count(*) from "cleansed"."cleansed__edinet__facts"': (40740,),
+        'select count(*) from "cleansed"."cleansed__jpx__files"': (0,),
         'select count(*) from "mart"."mart_company"': (123,),
         'select count(*) from "mart"."mart_financial_facts"': psycopg2.Error("does not exist"),
         "max(file_date), count(distinct edinet_code)": ("2026-08-13", 123),
@@ -74,7 +74,7 @@ def test_collect_report_data_counts_and_missing_relation() -> None:
     data = collect_report_data(FakeConn(FakeCursor(responses)))
 
     counts = {(s, t): n for s, t, n in data.layer_counts}
-    assert counts[("raw", "edinet_csv_facts")] == 41902
+    assert counts[("raw", "raw__edinet_csv_facts")] == 41902
     assert counts[("mart", "mart_financial_facts")] is None  # 存在しない → None
     assert data.edinet_latest_date == "2026-08-13"
     assert data.edinet_company_count == 123
@@ -86,7 +86,7 @@ def _sample_data() -> ReportData:
     return ReportData(
         generated_at=datetime.datetime(2026, 9, 11, 4, 1, 45, tzinfo=JST),
         layer_counts=[
-            ("raw", "edinet_csv_facts", 41902),
+            ("raw", "raw__edinet_csv_facts", 41902),
             ("mart", "mart_financial_facts", 4175),
             ("mart", "mart_company", 123),
         ],

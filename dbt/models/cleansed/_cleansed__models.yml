@@ -1,7 +1,7 @@
 version: 2
 
 models:
-  - name: cleansed_edinet__documents
+  - name: cleansed__edinet__documents
     description: "書類一覧インデックスの型付け版（上場会社の書類のみ）。"
     columns:
       - name: doc_id
@@ -12,7 +12,7 @@ models:
       - name: edinet_code
         data_tests: [not_null]
 
-  - name: cleansed_edinet__facts
+  - name: cleansed__edinet__facts
     description: "EDINET CSV 明細の型付け・名寄せ版（同一データポイントは最新提出のみ）。"
     columns:
       - name: doc_id
@@ -26,7 +26,7 @@ models:
               arguments:
                 values: ["consolidated", "non_consolidated", "other"]
 
-  - name: cleansed_jpx__files
+  - name: cleansed__jpx__files
     description: "JPX ファイル目録の型付け版。"
     columns:
       - name: relative_path
@@ -45,15 +45,15 @@ models:
 unit_tests:
   - name: facts_map_consolidation_parse_numbers_and_dedupe
     description: "連結・個別のマッピング、数値判定、最新提出での名寄せを検証。"
-    model: cleansed_edinet__facts
+    model: cleansed__edinet__facts
     given:
-      - input: source('raw', 'edinet_csv_facts')
+      - input: source('raw', 'raw__edinet_csv_facts')
         rows:
           - {file_date: "2026-08-13", edinet_code: "E1", doc_id: "D1", element_id: "NetSales", item_name: "売上高", context_id: "CY", relative_year: "当期", consolidated_individual: "連結", period_instant: "期間", unit_id: "JPY", unit: "円", value: "1000"}
           - {file_date: "2026-08-13", edinet_code: "E1", doc_id: "D1", element_id: "NetSales", item_name: "売上高", context_id: "CY", relative_year: "当期", consolidated_individual: "個別", period_instant: "期間", unit_id: "JPY", unit: "円", value: "900"}
           - {file_date: "2026-08-20", edinet_code: "E1", doc_id: "D2", element_id: "NetSales", item_name: "売上高", context_id: "CY", relative_year: "当期", consolidated_individual: "連結", period_instant: "期間", unit_id: "JPY", unit: "円", value: "1100"}
           - {file_date: "2026-08-13", edinet_code: "E1", doc_id: "D1", element_id: "Foo", item_name: "備考", context_id: "CY", relative_year: "当期", consolidated_individual: "その他", period_instant: "時点", unit_id: "", unit: "", value: "－"}
-      - input: ref('cleansed_edinet__documents')
+      - input: ref('cleansed__edinet__documents')
         rows:
           - {doc_id: "D1", sec_code: "10000", submit_date_time: "2026-08-13 09:00:00+09"}
           - {doc_id: "D2", sec_code: "10000", submit_date_time: "2026-08-20 09:00:00+09"}
@@ -65,9 +65,9 @@ unit_tests:
 
   - name: jpx_files_derive_period_date
     description: "period から period_date（月次は月初日）を作れること。"
-    model: cleansed_jpx__files
+    model: cleansed__jpx__files
     given:
-      - input: source('raw', 'jpx_file_catalog')
+      - input: source('raw', 'raw__jpx_file_catalog')
         rows:
           - {format: "monthly-ohlc", granularity: "monthly", period: "2025-01", file_kind: "pdf", relative_path: "p/monthly.pdf", byte_size: "123", modified_at: "2025-02-01T00:00:00+00:00"}
           - {format: "legacy-daily", granularity: "daily", period: "2019-12-02", file_kind: "pdf", relative_path: "p/daily.pdf", byte_size: "456", modified_at: "2020-01-06T12:00:00+00:00"}

@@ -3,7 +3,7 @@
 -- ワイド（財務諸表形式）へのピボットは後続作業（採用要素の選定 = ウェアハウス設計）。
 
 with facts as (
-    select * from {{ ref('cleansed_edinet__facts') }}
+    select * from {{ ref('cleansed__edinet__facts') }}
 ),
 
 whitelist as (

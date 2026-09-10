@@ -14,7 +14,7 @@ CREATE SERVER lake_files FOREIGN DATA WRAPPER file_fdw;
 
 
 -- EDINET CSV(type=5) の全書類明細（縦持ち）。
-CREATE FOREIGN TABLE raw.edinet_csv_facts (
+CREATE FOREIGN TABLE raw.raw__edinet_csv_facts (
     file_date               text,
     edinet_code             text,
     doc_id                  text,
@@ -31,12 +31,12 @@ CREATE FOREIGN TABLE raw.edinet_csv_facts (
 SERVER lake_files
 OPTIONS (program 'python3 /opt/fdw/edinet_csv_fdw.py /lake', format 'csv');
 
-COMMENT ON FOREIGN TABLE raw.edinet_csv_facts IS
+COMMENT ON FOREIGN TABLE raw.raw__edinet_csv_facts IS
     'レイクの edinet-dl/raw/{date}/{ec}/csv/{doc}/*.csv.gz を平坦化したもの。ラッパー: /opt/fdw/edinet_csv_fdw.py';
 
 
 -- EDINET 書類一覧 API の生レスポンス results[]（1 行 = 1 書類）。
-CREATE FOREIGN TABLE raw.edinet_document_index (
+CREATE FOREIGN TABLE raw.raw__edinet_document_index (
     file_date              text,
     seq_number             text,
     doc_id                 text,
@@ -71,12 +71,12 @@ CREATE FOREIGN TABLE raw.edinet_document_index (
 SERVER lake_files
 OPTIONS (program 'python3 /opt/fdw/edinet_docindex_fdw.py /lake', format 'csv');
 
-COMMENT ON FOREIGN TABLE raw.edinet_document_index IS
+COMMENT ON FOREIGN TABLE raw.raw__edinet_document_index IS
     'レイクの edinet-dl/raw/response/document_list_*.json の results[]。ラッパー: /opt/fdw/edinet_docindex_fdw.py';
 
 
 -- JPX 日次相場表 PDF/TIFF のファイル目録（内容は含まない）。
-CREATE FOREIGN TABLE raw.jpx_file_catalog (
+CREATE FOREIGN TABLE raw.raw__jpx_file_catalog (
     format        text,
     granularity   text,
     period        text,
@@ -88,5 +88,5 @@ CREATE FOREIGN TABLE raw.jpx_file_catalog (
 SERVER lake_files
 OPTIONS (program 'python3 /opt/fdw/jpx_catalog_fdw.py /lake', format 'csv');
 
-COMMENT ON FOREIGN TABLE raw.jpx_file_catalog IS
+COMMENT ON FOREIGN TABLE raw.raw__jpx_file_catalog IS
     'レイクの jpx-daily-pdf-dl/raw/{形式}/... のファイル目録。ラッパー: /opt/fdw/jpx_catalog_fdw.py';

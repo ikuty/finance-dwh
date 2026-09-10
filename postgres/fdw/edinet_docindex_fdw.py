@@ -2,7 +2,7 @@
 """レイクに保存された EDINET 書類一覧 API の生レスポンス（document_list_{date}.json）を
 走査し、全 results[] レコードを 1 つの CSV ストリーム（stdout）に平坦化する。
 PostgreSQL の file_fdw の `program` オプションから起動され、外部テーブル
-`raw.edinet_document_index` の実体となる。
+`raw.raw__edinet_document_index` の実体となる。
 
 レイク上のパス:
     {LAKE_ROOT}/edinet-dl/raw/response/document_list_{YYYY-MM-DD}.json
