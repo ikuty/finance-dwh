@@ -3,9 +3,9 @@
 Prefect の ephemeral モードで単発実行する（常駐サーバ・ワーカーは持たない）:
     python -m flows.daily_transform
 
-流れ: Postgres 起動待ち → landing 取り込み → dbt build → 実行レポート生成 →
-S3 アップロード → Slack 通知。dbt が失敗してもレポート生成・S3・Slack までは実行し、
-最後に非ゼロ終了する。
+流れ: landing 取り込み → dbt build → 実行レポート生成 → S3 アップロード → Slack 通知。
+DuckDB は組み込み型（サーバなし）のため、Postgres 版にあった起動待ちは無い。
+dbt が失敗してもレポート生成・S3・Slack までは実行し、最後に非ゼロ終了する。
 """
 
 from __future__ import annotations
@@ -13,10 +13,10 @@ from __future__ import annotations
 import logging
 import os
 import re
-import socket
 import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from prefect import flow, get_run_logger, task
 
@@ -27,8 +27,6 @@ from report.run_report import DbtOutcome, generate_report
 DBT_PROJECT_DIR = os.environ.get("DBT_PROJECT_DIR", "/app/dbt")
 DBT_PROFILES_DIR = os.environ.get("DBT_PROFILES_DIR", DBT_PROJECT_DIR)
 DBT_TARGET = os.environ.get("DBT_TARGET", "prod")
-DB_HOST = os.environ.get("DBT_HOST", "postgres")
-DB_PORT = int(os.environ.get("DBT_PORT", "5432"))
 
 # dbt の最終行: "Done. PASS=26 WARN=0 ERROR=0 SKIP=0 NO-OP=0 TOTAL=26"
 _SUMMARY_RE = re.compile(r"PASS=(\d+)\s+WARN=(\d+)\s+ERROR=(\d+)\s+SKIP=(\d+)")
@@ -58,20 +56,19 @@ class DbtBuildResult:
 
 
 @task
-def wait_for_postgres(timeout_s: float = 60.0, interval_s: float = 2.0) -> None:
-    """Postgres が TCP 接続を受け付けるまで待つ。"""
-    logger = get_run_logger()
-    deadline = time.monotonic() + timeout_s
-    last_error: OSError | None = None
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection((DB_HOST, DB_PORT), timeout=3):
-                logger.info(f"postgres {DB_HOST}:{DB_PORT} 応答あり")
-                return
-        except OSError as e:
-            last_error = e
-            time.sleep(interval_s)
-    raise RuntimeError(f"postgres {DB_HOST}:{DB_PORT} に {timeout_s:.0f}s 以内に接続できなかった: {last_error}")
+def ensure_data_dirs() -> None:
+    """landing・cleansed・.duckdb カタログの出力先ディレクトリを用意する。
+
+    dbt の external materialization（Parquet 書き出し）は親ディレクトリを
+    自動作成しないため、無いと `IO Error: Cannot open file` で落ちる。
+    """
+    for env_var, default in (
+        ("LANDING_ROOT", "/data/landing"),
+        ("CLEANSED_ROOT", "/data/cleansed"),
+    ):
+        Path(os.environ.get(env_var, default)).mkdir(parents=True, exist_ok=True)
+    duckdb_path = Path(os.environ.get("DUCKDB_PATH", "/data/finance_dwh.duckdb"))
+    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 @task
@@ -165,7 +162,7 @@ def publish_and_notify(html: str, summary: str) -> str:
 @flow(name="finance-dwh-daily-transform")
 def daily_transform() -> str:
     logger = get_run_logger()
-    wait_for_postgres()
+    ensure_data_dirs()
 
     loaded = load_edinet_csv_facts()
     logger.info(f"landing 取り込み: {loaded['dates']} 日 / {loaded['rows']} 行")

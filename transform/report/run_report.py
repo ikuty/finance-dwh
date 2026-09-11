@@ -1,17 +1,16 @@
-"""finance-dwh の日次変換の実行結果を HTML レポートにする。
+"""finance-dwh の日次変換の実行結果を HTML レポートにする（DuckDB / Parquet 版）。
 
 レイク(finance-lake)側の backfill_report.py と体裁をそろえる（モノスペース・小さめ
 フォント・`background:#fff`・素の <table>）。フローから `generate_report()` を呼ぶ。
 
 内容:
   - 実行メタ情報（生成時刻 JST、dbt の PASS/WARN/ERROR/SKIP、所要秒、成否）
-  - テーブルの行数（cleansed の native テーブル + jpx カタログ）
-  - 最新データ（EDINET の最新 file_date・会社数、JPX の最新 period・ファイル数）
+  - cleansed の Parquet ファイルの行数
+  - 最新データ（EDINET の最新 file_date・会社数）
 
-FDW の `raw__edinet_csv_facts` / `raw__edinet_document_index` は直接数えない
-（前者は count(*) が実測 約12分、後者も約11秒のフルスキャン。docs/fdw_raw_layer_design.md）。
-doc index は cleansed__edinet__documents（native、毎回 rebuild 済み）、CSV 明細は
-cleansed__edinet__facts（native、incremental）を数える。
+DuckDB はサーバを持たず、cleansed の Parquet ファイルを都度 `read_parquet()` で
+直接読む（接続はプロセス内、常駐なし）。jpx はまだ DuckDB へ移行していないため
+このレポートには含めない（移行時に追加する）。
 """
 
 from __future__ import annotations
@@ -19,35 +18,27 @@ from __future__ import annotations
 import datetime
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
-import psycopg2
+import duckdb
 
 JST = datetime.timezone(datetime.timedelta(hours=9), name="JST")
 
-# 行数を出すテーブル（表示順）。存在しなければ件数欄は "-"。
-# raw__edinet_csv_facts（FDW）は含めない（count(*) が約 12 分。上の docstring 参照）。
-# doc index は cleansed（native）側を数える（FDW の 11 秒スキャンを避ける）。
+CLEANSED_ROOT = os.environ.get("CLEANSED_ROOT", "/data/cleansed")
+
+# 行数を出す Parquet ファイル（表示順）。存在しなければ件数欄は "-"。
 COUNTED_RELATIONS: list[tuple[str, str]] = [
-    ("cleansed", "cleansed__edinet__documents"),
-    ("cleansed", "cleansed__edinet__facts"),
-    ("raw", "raw__jpx_file_catalog"),
+    ("cleansed", "edinet_documents"),
+    ("cleansed", "edinet_facts"),
 ]
 
 
-class DbCursor(Protocol):
-    """psycopg2 の cursor のうち本モジュールが使う部分（テストで差し替え可能に）。"""
-
-    def execute(self, sql: str) -> object: ...
-    def fetchone(self) -> tuple[object, ...] | None: ...
-    def __enter__(self) -> "DbCursor": ...
-    def __exit__(self, *exc: object) -> None: ...
-
-
 class DbConn(Protocol):
-    autocommit: bool
+    """duckdb.DuckDBPyConnection のうち本モジュールが使う部分（テストで差し替え可能に）。"""
 
-    def cursor(self) -> DbCursor: ...
+    def execute(self, sql: str) -> "DbConn": ...
+    def fetchone(self) -> tuple[object, ...] | None: ...
 
 
 @dataclass
@@ -66,39 +57,27 @@ class ReportData:
     layer_counts: list[tuple[str, str, int | None]]
     edinet_latest_date: str | None
     edinet_company_count: int | None
-    jpx_latest_date: str | None
-    jpx_file_count: int | None
-
-
-def _dsn_from_env() -> str:
-    return (
-        f"host={os.environ.get('DBT_HOST', 'postgres')} "
-        f"port={os.environ.get('DBT_PORT', '5432')} "
-        f"dbname={os.environ.get('DBT_DBNAME', 'finance_dwh')} "
-        f"user={os.environ.get('DBT_USER', 'finance')} "
-        f"password={os.environ.get('DBT_PASSWORD', '')}"
-    )
 
 
 def _as_int(value: object) -> int | None:
     return value if isinstance(value, int) else None
 
 
-def _count(cur: DbCursor, schema: str, table: str) -> int | None:
-    """1 テーブルの行数。テーブルが無ければ None。"""
+def _count(con: DbConn, path: Path) -> int | None:
+    """1 ファイルの行数。存在しない/読めなければ None。"""
+    if not path.exists():
+        return None
     try:
-        cur.execute(f'select count(*) from "{schema}"."{table}"')
-        row = cur.fetchone()
-    except psycopg2.Error:
+        row = con.execute(f"select count(*) from read_parquet('{path.as_posix()}')").fetchone()
+    except duckdb.Error:
         return None
     return None if row is None else _as_int(row[0])
 
 
-def _scalar_pair(cur: DbCursor, sql: str) -> tuple[str | None, int | None]:
+def _scalar_pair(con: DbConn, sql: str) -> tuple[str | None, int | None]:
     try:
-        cur.execute(sql)
-        row = cur.fetchone()
-    except psycopg2.Error:
+        row = con.execute(sql).fetchone()
+    except duckdb.Error:
         return (None, None)
     if row is None or len(row) < 2:
         return (None, None)
@@ -106,26 +85,23 @@ def _scalar_pair(cur: DbCursor, sql: str) -> tuple[str | None, int | None]:
     return (first, _as_int(row[1]))
 
 
-def collect_report_data(conn: DbConn) -> ReportData:
-    conn.autocommit = True
-    with conn.cursor() as cur:
-        layer_counts = [(s, t, _count(cur, s, t)) for s, t in COUNTED_RELATIONS]
+def collect_report_data(con: DbConn, cleansed_root: Path) -> ReportData:
+    layer_counts = [(schema, name, _count(con, cleansed_root / f"{name}.parquet")) for schema, name in COUNTED_RELATIONS]
+
+    docs_path = cleansed_root / "edinet_documents.parquet"
+    edinet_latest, edinet_companies = (None, None)
+    if docs_path.exists():
         edinet_latest, edinet_companies = _scalar_pair(
-            cur,
+            con,
             "select max(file_date), count(distinct edinet_code) "
-            'from "cleansed"."cleansed__edinet__documents"',
+            f"from read_parquet('{docs_path.as_posix()}')",
         )
-        jpx_latest, jpx_files = _scalar_pair(
-            cur,
-            'select max(period), count(*) from "raw"."raw__jpx_file_catalog"',
-        )
+
     return ReportData(
         generated_at=datetime.datetime.now(JST),
         layer_counts=layer_counts,
         edinet_latest_date=edinet_latest,
         edinet_company_count=edinet_companies,
-        jpx_latest_date=jpx_latest,
-        jpx_file_count=jpx_files,
     )
 
 
@@ -134,9 +110,9 @@ def _fmt_count(n: int | None) -> str:
 
 
 def _dbt_phrase(dbt: DbtOutcome) -> str:
-    """dbt の結果を短い文言に。モデル未定義（raw のみ）の間は件数を出さない。"""
+    """dbt の結果を短い文言に。モデル未定義の間は件数を出さない。"""
     if dbt.passed == dbt.warned == dbt.errored == dbt.skipped == 0:
-        return "モデル未定義（raw のみ）"
+        return "モデル未定義"
     return f"PASS={dbt.passed} WARN={dbt.warned} ERROR={dbt.errored} SKIP={dbt.skipped}"
 
 
@@ -145,16 +121,14 @@ def render_html(data: ReportData, dbt: DbtOutcome) -> str:
     status_text = "✅ 成功" if dbt.ok else "❌ 失敗"
 
     layer_rows = "\n".join(
-        f'<tr><td>{schema}</td><td>{table}</td><td class="num">{_fmt_count(n)}</td></tr>'
-        for schema, table, n in data.layer_counts
+        f'<tr><td>{schema}</td><td>{name}</td><td class="num">{_fmt_count(n)}</td></tr>'
+        for schema, name, n in data.layer_counts
     )
 
     latest_rows = "\n".join(
         [
             f'<tr><td>EDINET 最新 file_date</td><td class="num">{data.edinet_latest_date or "-"}</td></tr>',
             f'<tr><td>EDINET 会社数</td><td class="num">{_fmt_count(data.edinet_company_count)}</td></tr>',
-            f'<tr><td>JPX 最新 period_date</td><td class="num">{data.jpx_latest_date or "-"}</td></tr>',
-            f'<tr><td>JPX ファイル数</td><td class="num">{_fmt_count(data.jpx_file_count)}</td></tr>',
         ]
     )
 
@@ -187,7 +161,7 @@ def render_html(data: ReportData, dbt: DbtOutcome) -> str:
 </div>
 <h2>層別行数</h2>
 <table>
-<tr><th>スキーマ</th><th>テーブル</th><th>行数</th></tr>
+<tr><th>スキーマ</th><th>ファイル</th><th>行数</th></tr>
 {layer_rows}
 </table>
 <h2>最新データ</h2>
@@ -202,22 +176,20 @@ def render_html(data: ReportData, dbt: DbtOutcome) -> str:
 
 def summary_text(data: ReportData, dbt: DbtOutcome) -> str:
     status = "✅ 成功" if dbt.ok else "❌ 失敗"
-    facts = next((n for _s, t, n in data.layer_counts if t == "cleansed__edinet__facts"), None)
+    facts = next((n for _s, name, n in data.layer_counts if name == "edinet_facts"), None)
     company_n = _fmt_count(data.edinet_company_count)
-    jpx_n = _fmt_count(data.jpx_file_count)
     return (
         f"{status} / finance-dwh 日次 / dbt {_dbt_phrase(dbt)} / "
-        f"cleansed: EDINET明細{_fmt_count(facts)}行・{company_n}社, JPX {jpx_n}ファイル"
+        f"cleansed: EDINET明細{_fmt_count(facts)}行・{company_n}社"
     )
 
 
-def generate_report(dbt: DbtOutcome, *, dsn: str | None = None) -> tuple[str, str]:
+def generate_report(dbt: DbtOutcome, *, cleansed_root: str | None = None) -> tuple[str, str]:
     """レポート HTML と Slack 用の短いサマリ文字列を返す。"""
-    conn = psycopg2.connect(dsn or _dsn_from_env())
+    root = Path(cleansed_root or CLEANSED_ROOT)
+    con = duckdb.connect()
     try:
-        # psycopg2 の connection は DbConn を構造的に満たすが、cursor() の
-        # オーバーロード定義のため mypy が判定できない。実行時は問題ない。
-        data = collect_report_data(conn)  # type: ignore[arg-type]
+        data = collect_report_data(con, root)
     finally:
-        conn.close()
+        con.close()
     return render_html(data, dbt), summary_text(data, dbt)

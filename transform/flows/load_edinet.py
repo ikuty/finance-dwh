@@ -1,84 +1,64 @@
-"""landing.edinet_csv_facts への日付単位の取り込み。
+"""landing への日付単位の Parquet 取り込み（DuckDB 版）。
 
-file_fdw は述語プッシュダウン不可で全量スキャンが重い（実測 約12分）。日付を渡せる
-edinet_csv_fdw.py --date で 1 日ぶんだけ抽出し、native テーブル
-landing.edinet_csv_facts へ COPY する。以降 dbt はこの native テーブルを source にする。
+`edinet_csv_fdw.py` の日付走査・パース・破損ファイル耐性ロジックをそのまま再利用する。
+DuckDB 自身の CSV パーサーは EDINET の長大なテキストブロック（引用符付きフィールドが
+数万文字に及ぶ）で解析エラーになることを実機で確認したため、CSV 文字列を DuckDB に
+再度読ませることはしない。Python の csv モジュール（`edinet_csv_fdw`）でパース済みの
+行を列ごとに集約し、pyarrow Table 経由で DuckDB へ渡して Parquet を書く
+（行ごとの `executemany` は遅い実測があったため不採用。列指向集約 + pyarrow で
+実測 15〜20 万行/秒）。
 
-取り込み対象日 = 「直近 LOOKBACK_DAYS 日」∪「レイクに日付ディレクトリがあるが
-landing._load_log に無い日」。前者は edinet-dl の DAYS_WINDOW による遡及取得を、
-後者は過去バックフィルを拾う。1 日ぶんは BEGIN; DELETE; COPY; COMMIT で冪等に置換する。
+書き出し先: {LANDING_ROOT}/edinet_csv_facts/file_date={date}/part.parquet
+（一時ファイルに書いてから rename でアトミックに置換）。
+
+注意（DuckDB の Hive パーティショニング自動検出）: パスに `file_date=YYYY-MM-DD` を
+含むため、`read_parquet()` で読む側は単一ファイル指定でも自動的に Hive パーティション
+とみなし、ファイル内の file_date 列（ここでは VARCHAR で書く）を DATE 型の値で
+上書きして返す（実機で確認済み。書き込み自体は常に VARCHAR で正しく、読み取り側の
+挙動）。素の文字列が欲しい読み取りは `hive_partitioning=false` を明示すること。
+下流（dbt-duckdb 等）で使うときは、この自動 DATE 型カラムを積極的に使うか
+明示的に潰すかを設計時に決めること。
+
+取り込み対象日 = 直近 LOOKBACK_DAYS 日 ∪（レイクに日付ディレクトリがあるが landing に
+まだ無い日）。前者は edinet-dl の DAYS_WINDOW による遡及取得、後者は過去バックフィルを拾う。
+「日付ディレクトリの有無」だけを見る（landing 側は part.parquet の存在＝取り込み済みの
+印なので、0 行の日でも一度書けば翌日以降は再走査されない）。
 """
 
 from __future__ import annotations
 
 import datetime
 import os
-import subprocess
+import sys
 from pathlib import Path
-from typing import Protocol
 
-import psycopg2
+import duckdb
+import pyarrow as pa
 from prefect import get_run_logger, task
 
-WRAPPER = os.environ.get("EDINET_CSV_FDW", "/app/fdw/edinet_csv_fdw.py")
+import edinet_csv_fdw
+
 LAKE_ROOT = os.environ.get("LAKE_ROOT", "/lake")
+LANDING_ROOT = os.environ.get("LANDING_ROOT", "/data/landing")
 LOOKBACK_DAYS = int(os.environ.get("LANDING_LOOKBACK_DAYS", "7"))
 
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
-_DDL = """
-create schema if not exists landing;
-create table if not exists landing.edinet_csv_facts (
-    file_date               text not null,
-    edinet_code             text,
-    doc_id                  text,
-    element_id              text,
-    item_name               text,
-    context_id              text,
-    relative_year           text,
-    consolidated_individual text,
-    period_instant          text,
-    unit_id                 text,
-    unit                    text,
-    value                   text
-);
-create index if not exists ix_landing_edinet_csv_facts_file_date
-    on landing.edinet_csv_facts (file_date);
-create table if not exists landing.edinet_csv_facts_load_log (
-    file_date  text primary key,
-    row_count  bigint not null,
-    loaded_at  timestamptz not null default now()
-);
-"""
+# edinet_csv_fdw の出力列順をそのまま踏襲する。
+COLUMNS = edinet_csv_fdw.OUTPUT_HEADER
 
 
-class DbCursor(Protocol):
-    rowcount: int
+class _ColumnCollector:
+    """edinet_csv_fdw.run() の RowWriter として渡し、列ごとのリストへ集約する。"""
 
-    def execute(self, sql: str, params: tuple[object, ...] = ()) -> object: ...
-    def copy_expert(self, sql: str, file: object) -> object: ...
-    def fetchall(self) -> list[tuple[object, ...]]: ...
-    def __enter__(self) -> DbCursor: ...
-    def __exit__(self, *exc: object) -> None: ...
+    def __init__(self, ncols: int) -> None:
+        self.columns: list[list[str]] = [[] for _ in range(ncols)]
 
-
-class DbConn(Protocol):
-    autocommit: bool
-
-    def cursor(self) -> DbCursor: ...
-    def __enter__(self) -> DbConn: ...
-    def __exit__(self, *exc: object) -> None: ...
-    def close(self) -> None: ...
-
-
-def _dsn_from_env() -> str:
-    return (
-        f"host={os.environ.get('DBT_HOST', 'postgres')} "
-        f"port={os.environ.get('DBT_PORT', '5432')} "
-        f"dbname={os.environ.get('DBT_DBNAME', 'finance_dwh')} "
-        f"user={os.environ.get('DBT_USER', 'finance')} "
-        f"password={os.environ.get('DBT_PASSWORD', '')}"
-    )
+    def writerow(self, row: list[str]) -> object:
+        cols = self.columns
+        for i, value in enumerate(row):
+            cols[i].append(value)
+        return None
 
 
 def disk_dates(lake_root: Path) -> set[str]:
@@ -99,70 +79,68 @@ def disk_dates(lake_root: Path) -> set[str]:
     return out
 
 
-def logged_dates(conn: DbConn) -> set[str]:
-    """landing._load_log に記録済みの日。"""
-    with conn.cursor() as cur:
-        cur.execute("select file_date from landing.edinet_csv_facts_load_log")
-        return {str(row[0]) for row in cur.fetchall()}
+def landing_logged_dates(landing_root: Path) -> set[str]:
+    """landing/edinet_csv_facts/file_date=*/ が既に存在する日の集合（=取り込み済み）。"""
+    base = landing_root / "edinet_csv_facts"
+    out: set[str] = set()
+    if not base.is_dir():
+        return out
+    for d in base.iterdir():
+        if d.is_dir() and d.name.startswith("file_date=") and (d / "part.parquet").exists():
+            out.add(d.name.removeprefix("file_date="))
+    return out
 
 
 def recent_dates(today: datetime.date, days: int) -> set[str]:
     return {(today - datetime.timedelta(days=i)).isoformat() for i in range(days + 1)}
 
 
-def dates_to_load(conn: DbConn, lake_root: Path, today: datetime.date, lookback: int) -> list[str]:
+def dates_to_load(lake_root: Path, landing_root: Path, today: datetime.date, lookback: int) -> list[str]:
     on_disk = disk_dates(lake_root)
-    done = logged_dates(conn)
+    done = landing_logged_dates(landing_root)
     return sorted((on_disk - done) | (on_disk & recent_dates(today, lookback)))
 
 
-def load_one(conn: DbConn, lake_root: Path, wrapper: str, date: str) -> int:
-    """1 日ぶんを DELETE→COPY で置換し、_load_log を upsert する。戻り値は投入行数。"""
-    proc = subprocess.Popen(  # noqa: S603
-        ["python3", wrapper, str(lake_root), "--date", date],
-        stdout=subprocess.PIPE,
-    )
-    if proc.stdout is None:  # pragma: no cover - Popen(stdout=PIPE) では None にならない
-        raise RuntimeError("wrapper の stdout を取得できなかった")
+def load_one(lake_root: Path, landing_root: Path, date: str) -> int:
+    """1 日ぶんを Parquet として書き出す（一時ファイル→rename でアトミックに置換）。
+
+    戻り値は書き出した行数。
+    """
+    collector = _ColumnCollector(len(COLUMNS))
+    skipped = edinet_csv_fdw.run(lake_root, collector, date)
+    if skipped:
+        print(f"warning: {date}: {skipped} 個の CSV を読み飛ばした", file=sys.stderr)
+
+    tbl = pa.table({col: pa.array(collector.columns[i], type=pa.string()) for i, col in enumerate(COLUMNS)})
+
+    out_dir = landing_root / "edinet_csv_facts" / f"file_date={date}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tmp_path = out_dir / "part.parquet.tmp"
+    final_path = out_dir / "part.parquet"
+
+    con = duckdb.connect()
     try:
-        with conn, conn.cursor() as cur:
-            cur.execute("delete from landing.edinet_csv_facts where file_date = %s", (date,))
-            cur.copy_expert(
-                "copy landing.edinet_csv_facts from stdin with (format csv)", proc.stdout
-            )
-            rows = cur.rowcount
-            cur.execute(
-                "insert into landing.edinet_csv_facts_load_log (file_date, row_count) "
-                "values (%s, %s) "
-                "on conflict (file_date) do update set row_count = excluded.row_count, loaded_at = now()",
-                (date, rows),
-            )
+        con.execute(f"COPY (SELECT * FROM tbl) TO '{tmp_path.as_posix()}' (FORMAT PARQUET)")
     finally:
-        proc.stdout.close()
-        returncode = proc.wait()
-    if returncode != 0:
-        raise RuntimeError(f"edinet_csv_fdw.py --date {date} が exit {returncode}")
-    return rows
+        con.close()
+    tmp_path.replace(final_path)
+
+    return len(collector.columns[0])
 
 
 @task
-def load_edinet_csv_facts(dsn: str | None = None) -> dict[str, int]:
-    """landing.edinet_csv_facts を最新化する。"""
+def load_edinet_csv_facts() -> dict[str, int]:
+    """landing/edinet_csv_facts を最新化する。"""
     logger = get_run_logger()
-    conn = psycopg2.connect(dsn or _dsn_from_env())
-    conn.autocommit = False
-    try:
-        with conn, conn.cursor() as cur:
-            cur.execute(_DDL)
-        today = datetime.datetime.now(JST).date()
-        dates = dates_to_load(conn, Path(LAKE_ROOT), today, LOOKBACK_DAYS)  # type: ignore[arg-type]
-        head = ", ".join(dates[:3]) + (" ..." if len(dates) > 3 else "")
-        logger.info(f"landing 取り込み対象: {len(dates)} 日 [{head}]")
-        total = 0
-        for date in dates:
-            rows = load_one(conn, Path(LAKE_ROOT), WRAPPER, date)  # type: ignore[arg-type]
-            total += rows
-            logger.info(f"  {date}: {rows} 行")
-        return {"dates": len(dates), "rows": total}
-    finally:
-        conn.close()
+    lake_root = Path(LAKE_ROOT)
+    landing_root = Path(LANDING_ROOT)
+    today = datetime.datetime.now(JST).date()
+    dates = dates_to_load(lake_root, landing_root, today, LOOKBACK_DAYS)
+    head = ", ".join(dates[:3]) + (" ..." if len(dates) > 3 else "")
+    logger.info(f"landing 取り込み対象: {len(dates)} 日 [{head}]")
+    total = 0
+    for date in dates:
+        rows = load_one(lake_root, landing_root, date)
+        total += rows
+        logger.info(f"  {date}: {rows} 行")
+    return {"dates": len(dates), "rows": total}

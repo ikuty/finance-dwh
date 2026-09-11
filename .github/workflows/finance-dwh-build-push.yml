@@ -1,15 +1,15 @@
-name: finance-dwh - Build and push images
+name: finance-dwh - Build and push image
 
 # 設計: docs/deployment_design.md
 # main への push で自動実行（Mac Mini の稼働状態に依存しない）。
-# postgres（file_fdw の raw 層）と transform（dbt + Prefect フロー）の 2 イメージを
-# ghcr.io へ push する。Mac Mini への反映は finance-dwh-deploy.yml（手動）で行う。
+# transform（DuckDB + dbt + Prefect フロー）の1イメージを ghcr.io へ push する。
+# postgres イメージは DuckDB 化に伴い廃止した（常駐 DB が不要になったため）。
+# Mac Mini への反映は finance-dwh-deploy.yml（手動）で行う。
 
 on:
   push:
     branches: [main]
     paths:
-      - "postgres/**"
       - "transform/**"
       - "dbt/**"
       - ".github/workflows/finance-dwh-build-push.yml"
@@ -28,14 +28,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push postgres image
-        uses: docker/build-push-action@v6
-        with:
-          context: postgres
-          file: postgres/Dockerfile
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/finance-dwh-postgres:latest
 
       - name: Build and push transform image
         uses: docker/build-push-action@v6

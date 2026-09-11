@@ -1,8 +1,12 @@
-"""daily_transform.py の純粋関数（dbt サマリ解析・サマリ文言）のテスト。"""
+"""daily_transform.py の純粋関数（dbt サマリ解析・サマリ文言）＋ ensure_data_dirs のテスト。"""
 
 from __future__ import annotations
 
-from flows.daily_transform import DbtBuildResult, build_summary_text, parse_dbt_summary
+from pathlib import Path
+
+import pytest
+
+from flows.daily_transform import DbtBuildResult, build_summary_text, ensure_data_dirs, parse_dbt_summary
 
 
 def test_parse_dbt_summary_reads_counts() -> None:
@@ -29,3 +33,21 @@ def test_build_summary_text_success() -> None:
 def test_build_summary_text_failure() -> None:
     r = DbtBuildResult(returncode=1, passed=20, warned=0, errored=3, skipped=2, duration_s=9.9, tail="")
     assert build_summary_text(r).startswith("❌ 失敗")
+
+
+def test_ensure_data_dirs_creates_landing_cleansed_and_duckdb_parent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    landing = tmp_path / "d1" / "landing"
+    cleansed = tmp_path / "d2" / "cleansed"
+    duckdb_path = tmp_path / "d3" / "sub" / "finance_dwh.duckdb"
+    monkeypatch.setenv("LANDING_ROOT", str(landing))
+    monkeypatch.setenv("CLEANSED_ROOT", str(cleansed))
+    monkeypatch.setenv("DUCKDB_PATH", str(duckdb_path))
+
+    ensure_data_dirs()
+
+    assert landing.is_dir()
+    assert cleansed.is_dir()
+    assert duckdb_path.parent.is_dir()
+    assert not duckdb_path.exists()  # ファイル自体は作らない、親ディレクトリだけ

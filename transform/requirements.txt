@@ -1,4 +1,6 @@
 dbt-core~=1.12
-dbt-postgres~=1.11
+dbt-duckdb~=1.11
 prefect>=3.1,<4
 boto3~=1.43
+duckdb~=1.5
+pyarrow~=25.0

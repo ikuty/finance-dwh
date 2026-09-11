@@ -1,50 +1,28 @@
 # finance-dwh のローカル/本番共通の compose。
 #
-#   postgres  : raw 層(file_fdw)を含む DWH の DB。通電枠のあいだ起動しっぱなし。
-#   transform : dbt を実行する使い捨てコンテナ（`docker compose run --rm transform ...`）。
+#   transform : dbt(DuckDB) を実行する使い捨てコンテナ（`docker compose run --rm transform`）。
+#               DuckDB は組み込み型で常駐サーバを持たないため、常駐サービスは無い
+#               （Postgres 版で唯一の常駐例外だった postgres サービスは廃止した）。
 #
 # 設定は同ディレクトリの .env（.env.example 参照）から。少なくとも LAKE_DIR を指定すること。
-#   ローカル : LAKE_DIR=/tmp/lake-sample（テスト用の合成ツリー）
+#   ローカル : LAKE_DIR=/tmp/fdwh-lake（テスト用のサンプルツリー）
 #   Mac Mini : LAKE_DIR=/home/ikuty/finance-lake/data
 
 name: finance-dwh
 
 services:
-  postgres:
-    build:
-      context: ../postgres
-    image: finance-dwh-postgres:latest
-    environment:
-      POSTGRES_USER: "${POSTGRES_USER:-finance}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-finance}"
-      POSTGRES_DB: "${POSTGRES_DB:-finance_dwh}"
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - "${PGDATA_DIR:-../data/pgdata}:/var/lib/postgresql/data"
-      - "${LAKE_DIR:?LAKE_DIR を .env で指定してください}:/lake:ro"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-finance} -d ${POSTGRES_DB:-finance_dwh}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    restart: unless-stopped
-
   transform:
     build:
       context: ..
       dockerfile: transform/Dockerfile
     image: finance-dwh-transform:latest
     environment:
-      DBT_TARGET: "${DBT_TARGET:-prod}"
-      DBT_HOST: postgres
-      DBT_PORT: "5432"
-      DBT_USER: "${POSTGRES_USER:-finance}"
-      DBT_PASSWORD: "${POSTGRES_PASSWORD:-finance}"
-      DBT_DBNAME: "${POSTGRES_DB:-finance_dwh}"
-      # landing への日付単位 load（edinet_csv_fdw.py --date を叩く）
+      DUCKDB_PATH: /data/finance_dwh.duckdb
+      LANDING_ROOT: /data/landing
+      CLEANSED_ROOT: /data/cleansed
       LAKE_ROOT: /lake
       LANDING_LOOKBACK_DAYS: "${LANDING_LOOKBACK_DAYS:-7}"
+      DBT_TARGET: "${DBT_TARGET:-prod}"
       # レポート公開・通知（未設定なら該当ステップをスキップ）
       S3_BUCKET_NAME: "${S3_BUCKET_NAME:-}"
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
@@ -53,13 +31,12 @@ services:
       SLACK_WEBHOOK_URL: "${SLACK_WEBHOOK_URL:-}"
     volumes:
       - "${LAKE_DIR:?LAKE_DIR を .env で指定してください}:/lake:ro"
+      # .duckdb カタログ・landing・cleansed の Parquet はここに永続化される（HDD 側）。
+      - "${DATA_DIR:-../data}:/data"
       # ローカル開発でモデル・フローを編集→即再実行できるよう上書きマウント。
       - ../dbt:/app/dbt
       - ../transform/flows:/app/flows
       - ../transform/report:/app/report
-      - ../postgres/fdw/edinet_csv_fdw.py:/app/fdw/edinet_csv_fdw.py:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    # 常駐しない。`docker compose run --rm transform build` 等で都度起動する。
+      - ../transform/fdw/edinet_csv_fdw.py:/app/fdw/edinet_csv_fdw.py:ro
+    # 常駐しない。`docker compose run --rm transform` 等で都度起動する。
     profiles: ["manual"]

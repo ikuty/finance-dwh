@@ -1,15 +1,18 @@
-"""run_report.py のテスト。DB アクセスは Fake で差し替える。"""
+"""run_report.py のテスト（DuckDB / Parquet 版）。DuckDB は組み込みなので実物の
+Parquet フィクスチャを使う（モック不要）。"""
 
 from __future__ import annotations
 
 import datetime
+from pathlib import Path
 
-import psycopg2
+import duckdb
 
 from report.run_report import (
     DbtOutcome,
     ReportData,
     collect_report_data,
+    generate_report,
     render_html,
     summary_text,
 )
@@ -17,83 +20,65 @@ from report.run_report import (
 JST = datetime.timezone(datetime.timedelta(hours=9), name="JST")
 
 
-class FakeCursor:
-    def __init__(self, responses: dict[str, object]) -> None:
-        self._responses = responses
-        self._result: object = None
-
-    def __enter__(self) -> "FakeCursor":
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        return None
-
-    def execute(self, sql: str) -> None:
-        # 最長一致のキーを採用する（同じ SQL に複数キーが部分一致しうるため）。
-        matches = sorted((k for k in self._responses if k in sql), key=len, reverse=True)
-        if not matches:
-            self._result = None
-            return
-        value = self._responses[matches[0]]
-        if isinstance(value, Exception):
-            raise value
-        self._result = value
-
-    def fetchone(self) -> tuple[object, ...] | None:
-        result = self._result
-        assert result is None or isinstance(result, tuple)
-        return result
-
-
-class FakeConn:
-    def __init__(self, cur: FakeCursor) -> None:
-        self._cur = cur
-        self.autocommit = False
-
-    def cursor(self) -> FakeCursor:
-        return self._cur
+def write_parquet(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect()
+    try:
+        if rows:
+            cols = list(rows[0].keys())
+            values = ", ".join(
+                "(" + ", ".join(repr(r[c]) for c in cols) + ")" for r in rows
+            )
+            con.execute(
+                f"COPY (SELECT * FROM (VALUES {values}) AS t({', '.join(cols)})) "
+                f"TO '{path.as_posix()}' (FORMAT PARQUET)"
+            )
+        else:
+            con.execute(
+                f"COPY (SELECT NULL::date AS file_date, NULL::varchar AS edinet_code WHERE FALSE) "
+                f"TO '{path.as_posix()}' (FORMAT PARQUET)"
+            )
+    finally:
+        con.close()
 
 
 def _outcome(ok: bool = True) -> DbtOutcome:
-    return DbtOutcome(ok=ok, passed=26, warned=0, errored=0 if ok else 3, skipped=0, duration_s=1.4)
+    return DbtOutcome(ok=ok, passed=12, warned=0, errored=0 if ok else 3, skipped=0, duration_s=0.2)
 
 
-def test_collect_report_data_counts_and_missing_relation() -> None:
-    responses: dict[str, object] = {
-        'select count(*) from "cleansed"."cleansed__edinet__documents"': (222,),
-        'select count(*) from "cleansed"."cleansed__edinet__facts"': (9_500_000,),
-        'select count(*) from "raw"."raw__jpx_file_catalog"': psycopg2.Error("does not exist"),
-        "max(file_date), count(distinct edinet_code)": ("2026-09-08", 123),
-        "max(period), count(*)": (None, 0),
-    }
-    data = collect_report_data(FakeConn(FakeCursor(responses)))
+def test_collect_report_data_counts_and_missing_file(tmp_path: Path) -> None:
+    write_parquet(
+        tmp_path / "edinet_documents.parquet",
+        [
+            {"file_date": "2026-09-10", "edinet_code": "E00011"},
+            {"file_date": "2026-09-09", "edinet_code": "E00022"},
+            {"file_date": "2026-09-10", "edinet_code": "E00033"},
+        ],
+    )
+    # edinet_facts.parquet は書かない（欠損 → None）
 
-    counts = {(s, t): n for s, t, n in data.layer_counts}
-    assert set(counts) == {
-        ("cleansed", "cleansed__edinet__documents"),
-        ("cleansed", "cleansed__edinet__facts"),
-        ("raw", "raw__jpx_file_catalog"),
-    }
-    assert counts[("cleansed", "cleansed__edinet__facts")] == 9_500_000
-    assert counts[("raw", "raw__jpx_file_catalog")] is None  # 存在しない → None
-    assert data.edinet_latest_date == "2026-09-08"
-    assert data.edinet_company_count == 123
-    assert data.jpx_latest_date is None
-    assert data.jpx_file_count == 0
+    con = duckdb.connect()
+    try:
+        data = collect_report_data(con, tmp_path)
+    finally:
+        con.close()
+
+    counts = {(s, n): v for s, n, v in data.layer_counts}
+    assert counts[("cleansed", "edinet_documents")] == 3
+    assert counts[("cleansed", "edinet_facts")] is None
+    assert data.edinet_latest_date == "2026-09-10"
+    assert data.edinet_company_count == 3
 
 
 def _sample_data() -> ReportData:
     return ReportData(
         generated_at=datetime.datetime(2026, 9, 11, 4, 1, 45, tzinfo=JST),
         layer_counts=[
-            ("cleansed", "cleansed__edinet__documents", 222),
-            ("cleansed", "cleansed__edinet__facts", 9_500_000),
-            ("raw", "raw__jpx_file_catalog", 9961),
+            ("cleansed", "edinet_documents", 93),
+            ("cleansed", "edinet_facts", 10470),
         ],
-        edinet_latest_date="2026-09-08",
-        edinet_company_count=123,
-        jpx_latest_date=None,
-        jpx_file_count=9961,
+        edinet_latest_date="2026-09-10",
+        edinet_company_count=93,
     )
 
 
@@ -101,10 +86,9 @@ def test_render_html_success_contains_counts_and_house_style() -> None:
     html = render_html(_sample_data(), _outcome(ok=True))
     assert "background: #fff" in html
     assert "✅ 成功" in html
-    assert "9,500,000" in html
-    assert "cleansed__edinet__facts" in html
-    assert "raw__edinet_csv_facts" not in html  # FDW フルスキャン回避で含めない
-    assert "2026-09-08" in html
+    assert "10,470" in html
+    assert "edinet_facts" in html
+    assert "2026-09-10" in html
 
 
 def test_render_html_failure_marks_ng() -> None:
@@ -116,12 +100,30 @@ def test_render_html_failure_marks_ng() -> None:
 def test_summary_text_is_short_and_has_key_numbers() -> None:
     text = summary_text(_sample_data(), _outcome(ok=True))
     assert text.startswith("✅ 成功")
-    assert "123社" in text
-    assert "9,500,000行" in text
+    assert "93社" in text
+    assert "10,470行" in text
 
 
 def test_summary_text_when_no_dbt_models() -> None:
     zero = DbtOutcome(ok=True, passed=0, warned=0, errored=0, skipped=0, duration_s=0.5)
     text = summary_text(_sample_data(), zero)
-    assert "モデル未定義（raw のみ）" in text
+    assert "モデル未定義" in text
     assert "PASS=" not in text
+
+
+def test_generate_report_end_to_end(tmp_path: Path) -> None:
+    write_parquet(
+        tmp_path / "edinet_documents.parquet",
+        [{"file_date": "2026-09-10", "edinet_code": "E00011"}],
+    )
+    write_parquet(
+        tmp_path / "edinet_facts.parquet",
+        [{"edinet_code": "E00011", "value_num": 1000}, {"edinet_code": "E00011", "value_num": 2000}],
+    )
+
+    html, summary = generate_report(_outcome(ok=True), cleansed_root=str(tmp_path))
+
+    assert "finance-dwh 実行レポート" in html
+    assert summary.startswith("✅ 成功")
+    assert "1社" in summary
+    assert "2行" in summary

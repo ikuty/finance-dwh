@@ -14,11 +14,18 @@ clean-targets: ["target", "dbt_packages"]
 
 models:
   finance_dwh:
+    raw:
+      +schema: raw
     cleansed:
       +schema: cleansed
 
-# raw   : file_fdw 外部テーブルへの source 定義（models/raw/_raw__sources.yml）
-# landing: 日付単位 load で作る native テーブル（Prefect の load_edinet が管理、
-#          models/cleansed/_cleansed__sources.yml で source 宣言）
-# cleansed: landing / raw から型付け・名寄せする dbt モデル
-# mart   : 利用用途が固まってから
+# raw    : レイクを DuckDB で直接読む view モデル（models/raw/）。
+#          edinet_csv_facts だけは CSV パースが重い/DuckDB の CSV リーダーが
+#          長大フィールドで失敗するため例外（下記 landing 参照）。
+# landing: Prefect の load_edinet タスク（dbt の外）が書く Parquet
+#          （{LANDING_ROOT}/edinet_csv_facts/file_date=*/part.parquet）。
+#          dbt へは source の meta.external_location 経由で見せる
+#          （models/cleansed/_cleansed__sources.yml）。
+# cleansed: landing / raw から型付け・名寄せする dbt モデル。external
+#          materialization で Parquet に書く（{CLEANSED_ROOT}/*.parquet）。
+# mart   : 利用用途が固まってから。

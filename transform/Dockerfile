@@ -1,5 +1,6 @@
 # 変換ランナー。既定エントリポイントは Prefect フロー（daily_transform）。
 # 素の dbt を叩きたいときは `docker compose run --rm --entrypoint dbt transform <args>`。
+# DuckDB は組み込み型（サーバなし）。このイメージ単体で load・dbt build・レポート生成まで完結する。
 # ビルドコンテキストはリポジトリルート（compose の build.context: ..）。
 FROM python:3.12-slim
 
@@ -11,11 +12,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY dbt/ /app/dbt/
 COPY transform/flows/ /app/flows/
 COPY transform/report/ /app/report/
-# landing への日付単位 load で使う（postgres イメージと同じラッパー）
-COPY postgres/fdw/edinet_csv_fdw.py /app/fdw/edinet_csv_fdw.py
+# landing への日付単位 load で使う CSV 抽出ロジック（edinet_csv_fdw.py 由来）。
+COPY transform/fdw/edinet_csv_fdw.py /app/fdw/edinet_csv_fdw.py
 
 ENV DBT_PROJECT_DIR=/app/dbt \
     DBT_PROFILES_DIR=/app/dbt \
+    PYTHONPATH=/app/fdw \
     PREFECT_HOME=/tmp/prefect \
     PREFECT_SERVER_ANALYTICS_ENABLED=false
 

@@ -1,10 +1,11 @@
 name: finance-dwh - CI
 
 # push（main）と pull_request で実行。Mac Mini には依存しない。
-# 現状は raw 層のみ（dbt はモデル無し・source 定義のみ）なので、
-#   - postgres/fdw と transform の Python を mypy --strict + pytest
-#   - dbt プロジェクトを dbt parse で構造検証（DB 接続はしない）
-# cleansed モデルが入ったら、ここに postgres サービスコンテナ + dbt build を足す。
+# DuckDB は組み込み型なのでサービスコンテナは不要（Postgres 版にあった
+# postgres サービスコンテナは廃止。ci ターゲットは :memory: を使う）。
+#   - transform（flows/report/fdw）の Python を mypy --strict + pytest
+#   - dbt プロジェクトを dbt parse で構造検証（レイクの実データは無いので DB 接続はしない）
+# レイクのフィクスチャを用意できたら、ここに実データでの dbt build を足す余地がある。
 
 on:
   push:
@@ -38,6 +39,4 @@ jobs:
         working-directory: dbt
         env:
           DBT_TARGET: ci
-          DBT_HOST: localhost
-          DBT_PASSWORD: unused
         run: dbt parse --no-partial-parse --profiles-dir .

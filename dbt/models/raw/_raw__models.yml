@@ -1,0 +1,12 @@
+version: 2
+
+models:
+  - name: raw__edinet_document_index
+    description: >
+      書類一覧 API の生レスポンス results[]（1行=1書類）。DuckDB でレイクの
+      response/*/*/*/document_list.json を直接読む view（中間ステップ無し）。
+    columns:
+      - name: doc_id
+        description: "書類ID。"
+      - name: sec_code
+        description: "証券コード（5桁）。上場会社以外は空。"

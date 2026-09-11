@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """レイクの EDINET CSV（type=5、UTF-16LE・タブ区切り）を走査し、全書類の明細行を
-1つの CSV ストリーム（stdout）に平坦化する。PostgreSQL の file_fdw の `program`
-オプションから起動され、外部テーブル `raw.raw__edinet_csv_facts` の実体となる。
+取り出す。DuckDB 自身の CSV パーサーは EDINET の長大なテキストブロック（引用符付き
+フィールドが数万文字に及ぶ）で解析エラーになることを実機で確認したため、この
+stdlib（csv モジュール）実装で明細をパースしてから DuckDB に渡す
+（`transform/flows/load_edinet.py` が `run()` / `iter_csv_files()` /
+`provenance_from_path()` を直接 import して使う。詳細は docs/raw_landing_design.md）。
 
 レイク上のパス:
     {LAKE_ROOT}/edinet-dl/raw/{yyyy}/{mm}/{dd}/{edinetCode}/csv/{docID}/{name}.csv.gz
@@ -10,20 +13,21 @@
 ダブルクォートで囲む・固定 9 列」。値にはテキストブロック（改行を含む長文）が入りうるため、
 行単位のテキスト処理ではなく csv モジュールでパースする。
 
-出力（stdout）は 12 列の CSV（全フィールドをクォート、行終端 LF）:
+単体スクリプトとしても実行できる（手動確認・デバッグ用。stdout は 12 列の CSV、
+全フィールドをクォート、行終端 LF）:
     file_date, edinet_code, doc_id,
     element_id, item_name, context_id, relative_year, consolidated_individual,
     period_instant, unit_id, unit, value
 
 使い方:
-    python3 edinet_csv_fdw.py [LAKE_ROOT]                # 全期間（file_fdw から使われる形）
-    python3 edinet_csv_fdw.py [LAKE_ROOT] --date 2026-09-10   # その日だけ（landing への load 用）
+    python3 edinet_csv_fdw.py [LAKE_ROOT]                      # 全期間
+    python3 edinet_csv_fdw.py [LAKE_ROOT] --date 2026-09-10    # その日だけ
 
-`--date` を付けると走査を `raw/{yyyy}/{mm}/{dd}/` 配下だけに絞る。file_fdw は述語プッシュ
-ダウン不可でフルスキャンが重いため、日付単位の取り込みはこの引数付きで呼び出す。
+`--date` を付けると走査を `raw/{yyyy}/{mm}/{dd}/` 配下だけに絞る（load_edinet.py は
+常にこの形で日付単位に呼ぶ）。
 
 破損ファイル（gzip でない・途中で切れている等）は stderr に警告を出して読み飛ばし、
-走査全体は止めない（1 ファイルの不整合で外部テーブル全体が読めなくなるのを避ける）。
+走査全体は止めない（1 ファイルの不整合で全体が読めなくなるのを避ける）。
 """
 
 from __future__ import annotations
@@ -46,7 +50,7 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # ユニットID/単位/値）。
 N_DATA_COLS = 9
 
-# stdout に出す全列（provenance 3 列 + 明細 9 列）。file_fdw 側の CREATE FOREIGN TABLE と
+# 出力の全列（provenance 3 列 + 明細 9 列）。load_edinet.py の Parquet 書き出しと
 # 列順を一致させること。
 OUTPUT_HEADER = [
     "file_date",
@@ -142,8 +146,10 @@ def run(lake_root: Path, out: RowWriter, date: str | None = None) -> int:
 
 
 def _restore_default_sigpipe() -> None:
-    """パイプ下流（file_fdw）が LIMIT 等で読み切らずに閉じたとき、SIGPIPE で素直に
-    終了させる。既定の Python 動作（BrokenPipeError → 終了コード 120）を避ける。"""
+    """単体スクリプトとして実行したとき、下流（例: `| head`）が読み切らずにパイプを
+    閉じても SIGPIPE で素直に終了させる。既定の Python 動作
+    （BrokenPipeError → 終了コード 120）を避ける（load_edinet.py 経由の import では
+    パイプを使わないため無関係。file_fdw 時代に実機で踏んだ不具合への対処を残置）。"""
     if hasattr(signal, "SIGPIPE"):
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 

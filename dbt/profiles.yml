@@ -1,25 +1,15 @@
 # dbt の接続プロファイル。`dbt --profiles-dir dbt ...` で参照する。
-# 値はすべて環境変数から。prod(Mac Mini) と ci(GitHub Actions の postgres サービス)。
+# DuckDB は組み込み（サーバなし）。path はカタログ用の .duckdb ファイル
+# （cleansed 等の実データは external materialization で別途 Parquet に出る。
+# この .duckdb ファイル自体は小さいスキーマ情報のみ）。
 finance_dwh:
   target: "{{ env_var('DBT_TARGET', 'prod') }}"
   outputs:
     prod:
-      type: postgres
-      host: "{{ env_var('DBT_HOST', 'postgres') }}"
-      port: "{{ env_var('DBT_PORT', '5432') | as_number }}"
-      user: "{{ env_var('DBT_USER', 'finance') }}"
-      password: "{{ env_var('DBT_PASSWORD') }}"
-      dbname: "{{ env_var('DBT_DBNAME', 'finance_dwh') }}"
-      schema: public
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '/data/finance_dwh.duckdb') }}"
       threads: 4
-      sslmode: disable
     ci:
-      type: postgres
-      host: "{{ env_var('DBT_HOST', 'localhost') }}"
-      port: "{{ env_var('DBT_PORT', '5432') | as_number }}"
-      user: "{{ env_var('DBT_USER', 'postgres') }}"
-      password: "{{ env_var('DBT_PASSWORD', 'postgres') }}"
-      dbname: "{{ env_var('DBT_DBNAME', 'finance_dwh') }}"
-      schema: public
+      type: duckdb
+      path: ":memory:"
       threads: 4
-      sslmode: disable

@@ -1,19 +1,19 @@
 -- 書類一覧インデックスの型付け版（上場会社の書類のみ）。
--- FDW の raw__edinet_document_index を毎回フル rebuild する（983 JSON、実測 約11秒）。
--- 同じ docID が複数日の document_list.json に出現しうる（後日メタデータが編集され再掲載
--- されるため）ので、docID ごとに最新の掲載（file_date → ope_date_time）だけを残す。
--- raw の FDW は欠損を空文字で返す（SQL NULL ではない）ため nullif で正規化する。
+-- raw__edinet_document_index（DuckDB でレイクの JSON を毎回直接読む view）を
+-- 元に、型付け・名寄せして Parquet へ書き出す（external materialization、
+-- 常に全量 rebuild。DuckDB は高速なので incremental 化は不要と判断）。
+--
+-- 同じ docID が複数日の document_list.json に出現しうる（後日メタデータが編集され
+-- 再掲載されるため）ので、docID ごとに最新の掲載（file_date → ope_date_time）だけ残す。
 
 {{ config(
-    materialized='table',
-    indexes=[
-        {'columns': ['doc_id'], 'unique': true},
-        {'columns': ['edinet_code']},
-    ],
+    materialized='external',
+    location=env_var('CLEANSED_ROOT', '/data/cleansed') ~ '/edinet_documents.parquet',
+    format='parquet'
 ) }}
 
 with src as (
-    select * from {{ source('raw', 'raw__edinet_document_index') }}
+    select * from {{ ref('raw__edinet_document_index') }}
 ),
 
 ranked as (
@@ -28,25 +28,25 @@ ranked as (
 )
 
 select
-    file_date::date                                                  as file_date,
-    nullif(seq_number, '')::int                                      as seq_number,
+    cast(file_date as date)                          as file_date,
+    try_cast(seq_number as integer)                  as seq_number,
     doc_id,
     edinet_code,
     sec_code,
-    nullif(jcn, '')                                                  as jcn,
+    nullif(jcn, '')                                  as jcn,
     filer_name,
-    nullif(fund_code, '')                                            as fund_code,
+    nullif(fund_code, '')                            as fund_code,
     ordinance_code,
     form_code,
     doc_type_code,
-    nullif(period_start, '')::date                                   as period_start,
-    nullif(period_end, '')::date                                     as period_end,
-    to_timestamp(nullif(submit_date_time, ''), 'YYYY-MM-DD HH24:MI') as submit_date_time,
+    try_cast(nullif(period_start, '') as date)       as period_start,
+    try_cast(nullif(period_end, '') as date)         as period_end,
+    try_strptime(nullif(submit_date_time, ''), '%Y-%m-%d %H:%M') as submit_date_time,
     doc_description,
-    nullif(parent_doc_id, '')                                        as parent_doc_id,
-    (xbrl_flag = '1')                                                as has_xbrl,
-    (pdf_flag = '1')                                                 as has_pdf,
-    (csv_flag = '1')                                                 as has_csv,
-    (withdrawal_status <> '0')                                       as is_withdrawn
+    nullif(parent_doc_id, '')                        as parent_doc_id,
+    (xbrl_flag = '1')                                as has_xbrl,
+    (pdf_flag = '1')                                 as has_pdf,
+    (csv_flag = '1')                                 as has_csv,
+    (withdrawal_status <> '0')                       as is_withdrawn
 from ranked
 where _rn = 1

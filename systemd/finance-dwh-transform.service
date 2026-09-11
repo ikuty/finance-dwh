@@ -4,18 +4,21 @@
 #
 # 日次: レイクの取得ジョブ（edinet-dl / jpx-daily-pdf-dl）が終わってから
 # `docker compose run --rm transform` で Prefect フローを回す
-# （Postgres 起動待ち → dbt build → 実行レポート生成 → S3 → Slack）。
+# （landing 取り込み → dbt build（DuckDB）→ 実行レポート生成 → S3 → Slack）。
+#
+# DuckDB は組み込み型（サーバなし）のため、常駐させる依存サービスは無い
+# （旧 Postgres 版にあった finance-dwh-postgres.service は廃止した）。
 #
 # After= に edinet-dl.service / jpx-daily-pdf-dl.service を列挙するのは純粋な順序制約
 # （実行中なら待つ、未実行なら待たない。Requires=/Wants= は付けない）。raw 層は
-# レイクのファイルを file_fdw で直読みするため、取得ジョブが当日ぶんを書き終えてから
-# 走らせたい。Postgres が起動済みであることは必須なので
-# finance-dwh-postgres.service だけ Requires=。
+# レイクのファイルを DuckDB で直読みするため、取得ジョブが当日ぶんを書き終えてから
+# 走らせたい。
 #
 # マシンのシャットダウンはこのユニットでは行わない。finance-lake の共有シャットダウン
 # ユニット（finance-lake/systemd/finance-lake-shutdown.service）が全ジョブ完了後に
-# 一手に引き受ける。**そのユニットの After= 行に finance-dwh-transform.service を
-# 追記すること**（追記しないと DWH ジョブ完了前に halt されうる）。
+# 一手に引き受ける。そのユニットの After= 行には finance-dwh-transform.service が
+# 既に追記済み（finance-dwh-postgres.service への参照はそもそも含まれていないため、
+# この撤去にあたって finance-lake 側の変更は不要）。
 #
 # 有効化:
 #   sudo systemctl daemon-reload
@@ -25,9 +28,8 @@
 
 [Unit]
 Description=finance-dwh daily transform (dbt build + run report + Slack)
-After=network-online.target docker.service finance-dwh-postgres.service edinet-dl.service jpx-daily-pdf-dl.service
+After=network-online.target docker.service edinet-dl.service jpx-daily-pdf-dl.service
 Wants=network-online.target
-Requires=finance-dwh-postgres.service
 
 [Service]
 Type=oneshot
