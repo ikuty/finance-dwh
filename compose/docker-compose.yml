@@ -37,6 +37,6 @@ services:
       - ../dbt:/app/dbt
       - ../transform/flows:/app/flows
       - ../transform/report:/app/report
-      - ../transform/fdw/edinet_csv_fdw.py:/app/fdw/edinet_csv_fdw.py:ro
+      - ../transform/fdw:/app/fdw:ro
     # 常駐しない。`docker compose run --rm transform` 等で都度起動する。
     profiles: ["manual"]

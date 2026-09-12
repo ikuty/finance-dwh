@@ -12,8 +12,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY dbt/ /app/dbt/
 COPY transform/flows/ /app/flows/
 COPY transform/report/ /app/report/
-# landing への日付単位 load で使う CSV 抽出ロジック（edinet_csv_fdw.py 由来）。
-COPY transform/fdw/edinet_csv_fdw.py /app/fdw/edinet_csv_fdw.py
+# landing への日付単位 load で使う抽出ロジック（edinet_csv_fdw.py / jpx_stq_pdf.py /
+# jpx_stq_facts.py）。ディレクトリ単位でコピーし、fdw モジュール追加時にここを
+# 都度直す必要が無いようにする（.dockerignore で __pycache__ 等は除外済み）。
+COPY transform/fdw/ /app/fdw/
 
 ENV DBT_PROJECT_DIR=/app/dbt \
     DBT_PROFILES_DIR=/app/dbt \
