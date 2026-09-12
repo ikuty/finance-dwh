@@ -21,3 +21,11 @@ sources:
           を経て書く（詳細は docs/raw_landing_design.md 参照）。
         meta:
           external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/jpx_stq_facts/*/part.parquet', hive_partitioning=false)"
+      - name: jpx_monthly_ohlc_facts
+        description: >
+          JPX 形式B（株式相場表・月次簡易OHLC）の銘柄別明細（全列 text）。
+          file_date=YYYY-MM-DD で日付分割（元は1ファイル=1ヶ月だが、
+          load_jpx_monthly_ohlc_facts タスクが日付ごとに書き分ける）。
+          確定済み過去アーカイブ（2020-01〜、レイク側で一回限りバックフィル済み）。
+        meta:
+          external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/jpx_monthly_ohlc_facts/*/part.parquet', hive_partitioning=false)"

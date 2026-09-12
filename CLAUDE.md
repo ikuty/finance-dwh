@@ -57,10 +57,21 @@ Prefect + docker compose** で構築する。全体像は `docs/architecture.md`
   検証として dbt の singular テストで **OHLC整合性**（前場・後場それぞれ
   安値<=始値・終値<=高値）と **VWAP再計算**（売買代金÷売買高との照合、列の
   取り違えを検出できる検算）を追加した。詳細は `docs/raw_landing_design.md`
-  「JPX 形式C」参照。形式A・形式B、セクション1以外の取引種別（ToSTNeT等）は
-  未対応（今回のスコープ外、Stage1 は全ページ分保持しているため対象を広げても
-  Stage1 の再実行は不要）。Postgres 版にあった `jpx_catalog_fdw.py`（ファイル
-  目録のみ）は削除済み（git 履歴に残る）。
+  「JPX 形式C」参照。セクション1以外の取引種別（ToSTNeT等）は未対応（Stage1
+  は全ページ分保持しているため対象を広げても Stage1 の再実行は不要）。
+  Postgres 版にあった `jpx_catalog_fdw.py`（ファイル目録のみ）は削除済み
+  （git 履歴に残る）。
+- **JPX 形式B（株式相場表・月次簡易OHLC、確定済み過去アーカイブ、2020-01〜
+  2025-09の69ヶ月）も実装済み**（2026-09-13）。形式Cより単純（市場区分・
+  業種の見出しが無い単一フラット表、日付が各行にある）だが、**OHLC8列は
+  x0ではなくx1（右端）で列判定する必要がある**という形式B特有の重大な
+  落とし穴を実機データで発見・修正した（数値は右揃えのため、低位株の
+  短い数値はx0が隣列の境界を越えて誤分類される。x1は桁数によらず固定）。
+  銘柄コードも新体系（2024年1月導入、英字が途中に混在する5桁コード）に
+  対応。1ファイル=1ヶ月ぶんを日付ごとの`landing.jpx_monthly_ohlc_facts`
+  パーティションへ書き分け、「取り込み済み」は本体と別ディレクトリの
+  月次マーカーで判定する（確定済みアーカイブのため、EDINET/形式Cのような
+  遡及窓は不要）。詳細は `docs/raw_landing_design.md`「JPX 形式B」参照。
 - **Prefect は ephemeral 実行**（常駐サーバ・ワーカーなし）。フロー `daily_transform` を
   `python -m flows.daily_transform` で単発実行。UI が要るようになったら通電枠限定の
   `prefect-server` compose サービスを後付け。
@@ -107,11 +118,13 @@ finance-lake-shutdown.service` の `After=` には `finance-dwh-transform.servic
   EDINET 460日/20,583,925行の landing 取り込みが約17.5分、`dbt build` が9分11秒
   で完走、Postgres 版初回backfillの約71分から半減）。
 - JPX 形式C（株式相場表・詳細日次）の PDF テキスト化・構造化を実装・実データ
-  28日分で検証済み（`raw_landing_design.md`「JPX 形式C」参照）。`daily_transform`
-  フローに組み込み済み、レポート（`run_report.py`）にも JPX の最新日・銘柄数を
-  追加。
-- pytest 60件 / mypy --strict パス（コンテナでのフルフロー含む実データ検証は
-  ローカルで実施、Mac Mini への反映はこれから）。
-- 未了: JPX 追加分のコミット → push → Mac Mini への反映、mart 層の設計、
-  jpx のファイル目録（raw層）・形式A/B・セクション1以外の取引種別、Postgres 版の
-  landing データ（Mac Mini 上の pgdata）の後始末。
+  28日分で検証済み、Mac Mini 実機への反映・検証も完了（`raw_landing_design.md`
+  「JPX 形式C」参照）。
+- JPX 形式B（株式相場表・月次簡易OHLC、2020-01〜2025-09の69ヶ月）も実装・
+  実データ1ヶ月分（88,184行）で検証済み（`raw_landing_design.md`「JPX 形式B」
+  参照）。`daily_transform`フロー・レポートに組み込み済み。Mac Mini への
+  反映はこれから（69ヶ月分の初回バックフィルは電源枠を跨ぐ見込み）。
+- pytest 73件 / mypy --strict パス。
+- 未了: JPX 形式B分のコミット → push → Mac Mini への反映（69ヶ月バックフィル）、
+  mart 層の設計、jpx のファイル目録（raw層）・形式A・セクション1以外の取引
+  種別、Postgres 版の landing データ（Mac Mini 上の pgdata）の後始末。

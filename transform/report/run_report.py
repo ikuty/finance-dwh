@@ -31,6 +31,7 @@ COUNTED_RELATIONS: list[tuple[str, str]] = [
     ("cleansed", "edinet_documents"),
     ("cleansed", "edinet_facts"),
     ("cleansed", "jpx_stq_prices"),
+    ("cleansed", "jpx_monthly_ohlc"),
 ]
 
 
@@ -59,6 +60,7 @@ class ReportData:
     edinet_company_count: int | None
     jpx_latest_date: str | None = None
     jpx_code_count: int | None = None
+    jpx_monthly_code_count: int | None = None
 
 
 def _as_int(value: object) -> int | None:
@@ -108,6 +110,15 @@ def collect_report_data(con: DbConn, cleansed_root: Path) -> ReportData:
             f"from read_parquet('{jpx_path.as_posix()}')",
         )
 
+    monthly_path = cleansed_root / "jpx_monthly_ohlc.parquet"
+    jpx_monthly_codes = None
+    if monthly_path.exists():
+        try:
+            row = con.execute(f"select count(distinct code) from read_parquet('{monthly_path.as_posix()}')").fetchone()
+        except duckdb.Error:
+            row = None
+        jpx_monthly_codes = None if row is None else _as_int(row[0])
+
     return ReportData(
         generated_at=datetime.datetime.now(JST),
         layer_counts=layer_counts,
@@ -115,6 +126,7 @@ def collect_report_data(con: DbConn, cleansed_root: Path) -> ReportData:
         edinet_company_count=edinet_companies,
         jpx_latest_date=jpx_latest,
         jpx_code_count=jpx_codes,
+        jpx_monthly_code_count=jpx_monthly_codes,
     )
 
 
@@ -144,6 +156,7 @@ def render_html(data: ReportData, dbt: DbtOutcome) -> str:
             f'<tr><td>EDINET 会社数</td><td class="num">{_fmt_count(data.edinet_company_count)}</td></tr>',
             f'<tr><td>JPX 最新 file_date</td><td class="num">{data.jpx_latest_date or "-"}</td></tr>',
             f'<tr><td>JPX 銘柄数</td><td class="num">{_fmt_count(data.jpx_code_count)}</td></tr>',
+            f'<tr><td>JPX 月次OHLC 銘柄数</td><td class="num">{_fmt_count(data.jpx_monthly_code_count)}</td></tr>',
         ]
     )
 
@@ -195,10 +208,13 @@ def summary_text(data: ReportData, dbt: DbtOutcome) -> str:
     company_n = _fmt_count(data.edinet_company_count)
     jpx_rows = next((n for _s, name, n in data.layer_counts if name == "jpx_stq_prices"), None)
     jpx_code_n = _fmt_count(data.jpx_code_count)
+    jpx_monthly_rows = next((n for _s, name, n in data.layer_counts if name == "jpx_monthly_ohlc"), None)
+    jpx_monthly_code_n = _fmt_count(data.jpx_monthly_code_count)
     return (
         f"{status} / finance-dwh 日次 / dbt {_dbt_phrase(dbt)} / "
         f"cleansed: EDINET明細{_fmt_count(facts)}行・{company_n}社 / "
-        f"JPX相場{_fmt_count(jpx_rows)}行・{jpx_code_n}銘柄"
+        f"JPX相場{_fmt_count(jpx_rows)}行・{jpx_code_n}銘柄 / "
+        f"JPX月次OHLC{_fmt_count(jpx_monthly_rows)}行・{jpx_monthly_code_n}銘柄"
     )
 
 

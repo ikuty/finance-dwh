@@ -26,8 +26,8 @@ git 履歴（`afc45c7`〜`5ea9b52`）に残る。
 | 層 | 実体 | 現状 |
 |---|---|---|
 | raw | DuckDB の view モデル（doc index）。レイクを直接 glob 読み | **doc index のみ**（JPX のファイル目録は未実装） |
-| landing | Parquet（`{DATA_DIR}/landing/{table}/file_date=*/part.parquet`）。Prefect の `load_edinet` / `load_jpx_stq` が日付単位で書く | **edinet_csv_facts / jpx_stq_words / jpx_stq_facts** |
-| cleansed | dbt-duckdb の external materialization（Parquet）。型付け・名寄せ、毎回 rebuild | **edinet__documents / edinet__facts / jpx__stq_prices** |
+| landing | Parquet（`{DATA_DIR}/landing/{table}/file_date=*/part.parquet`）。Prefect の `load_edinet` / `load_jpx_stq` / `load_jpx_monthly_ohlc` が日付単位で書く | **edinet_csv_facts / jpx_stq_words / jpx_stq_facts / jpx_monthly_ohlc_facts** |
+| cleansed | dbt-duckdb の external materialization（Parquet）。型付け・名寄せ、毎回 rebuild | **edinet__documents / edinet__facts / jpx__stq_prices / jpx__monthly_ohlc** |
 | mart | dbt モデル（業務エンティティ） | **未設計** |
 
 - 命名: raw/cleansed は `<層>__<内容>`（例: `raw__edinet_document_index`、
@@ -49,8 +49,9 @@ git 履歴（`afc45c7`〜`5ea9b52`）に残る。
 | `landing.edinet_csv_facts`（source） | EDINET CSV(type=5) 全書類の明細（縦持ち、provenance 3列 + 9列） | Parquet、`edinet_csv_fdw.py` が日付ごとにパースして書く |
 | `landing.jpx_stq_words` | JPX 形式C(株式相場表・詳細日次) PDF の座標付き単語データ（page/top/x0/x1/size/text） | Parquet、`jpx_stq_pdf.py`（pdfplumber）が日付ごとにPDF全体を機械的に変換 |
 | `landing.jpx_stq_facts`（source） | セクション1(立会市場普通取引)の銘柄別明細（全列text、`_loaded_at`付き） | Parquet、`jpx_stq_facts.py` が `jpx_stq_words` を構造化 |
+| `landing.jpx_monthly_ohlc_facts`（source） | 形式B(月次簡易OHLC)の銘柄別明細（全列text、`_loaded_at`付き） | Parquet、`jpx_monthly_ohlc_facts.py` が1ヶ月分のPDFを日付ごとに構造化 |
 
-JPX のファイル目録（形式A/B含む raw 層）は未実装。Postgres 版にあった
+JPX のファイル目録（形式A含む raw 層）は未実装。Postgres 版にあった
 `jpx_catalog_fdw.py` は削除済み（git 履歴に残る、再着手時は DuckDB の `glob()` で
 書き直せる見込み）。JPX 形式Cの詳細設計は `docs/raw_landing_design.md`「JPX 形式C」
 参照。
@@ -84,12 +85,13 @@ Postgres 版（約71分）から半減した。JPX 形式C（280日規模・最�
 ## 実装状況（2026-09-13 時点）
 
 - raw（doc index の view）、landing（edinet_csv_facts / jpx_stq_words /
-  jpx_stq_facts、日付単位 Parquet）、cleansed（edinet__documents / edinet__facts /
-  jpx__stq_prices、毎回 rebuild）、Prefect フロー、docker compose（transform 単一
-  サービス）、systemd（transform のみ）、GitHub Actions 3 本まで実装済み。
-- EDINET は Mac Mini への反映・実スケール（2000万行超）性能検証まで完了
-  （2026-09-12）。JPX 形式Cはローカルで実データ28日分・dbt build まで検証済み、
-  Mac Mini への反映はこれから。
-- 未了: JPX 追加分の Mac Mini への反映、mart の設計、jpx のファイル目録（raw層）・
-  形式A/B・セクション1以外の取引種別、Mac Mini 上の Postgres 版データ（pgdata）の
-  後始末。
+  jpx_stq_facts / jpx_monthly_ohlc_facts、日付単位 Parquet）、cleansed
+  （edinet__documents / edinet__facts / jpx__stq_prices / jpx__monthly_ohlc、
+  毎回 rebuild）、Prefect フロー、docker compose（transform 単一サービス）、
+  systemd（transform のみ）、GitHub Actions 3 本まで実装済み。
+- EDINET・JPX形式Cは Mac Mini への反映・実データ検証まで完了（2026-09-12）。
+  JPX形式B（69ヶ月分の確定済み過去アーカイブ）はローカルで実データ1ヶ月分・
+  dbt build まで検証済み、Mac Mini への反映はこれから。
+- 未了: JPX形式B分の Mac Mini への反映（69ヶ月バックフィル、電源枠を跨ぐ見込み）、
+  mart の設計、jpx のファイル目録（raw層）・形式A・セクション1以外の取引種別、
+  Mac Mini 上の Postgres 版データ（pgdata）の後始末。

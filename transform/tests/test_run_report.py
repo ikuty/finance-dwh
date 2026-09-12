@@ -67,10 +67,12 @@ def test_collect_report_data_counts_and_missing_file(tmp_path: Path) -> None:
     assert counts[("cleansed", "edinet_documents")] == 3
     assert counts[("cleansed", "edinet_facts")] is None
     assert counts[("cleansed", "jpx_stq_prices")] is None
+    assert counts[("cleansed", "jpx_monthly_ohlc")] is None
     assert data.edinet_latest_date == "2026-09-10"
     assert data.edinet_company_count == 3
     assert data.jpx_latest_date is None
     assert data.jpx_code_count is None
+    assert data.jpx_monthly_code_count is None
 
 
 def test_collect_report_data_counts_jpx_when_present(tmp_path: Path) -> None:
@@ -95,6 +97,27 @@ def test_collect_report_data_counts_jpx_when_present(tmp_path: Path) -> None:
     assert data.jpx_code_count == 2
 
 
+def test_collect_report_data_counts_jpx_monthly_ohlc_when_present(tmp_path: Path) -> None:
+    write_parquet(
+        tmp_path / "jpx_monthly_ohlc.parquet",
+        [
+            {"file_date": "2025-09-01", "code": "13010"},
+            {"file_date": "2025-09-01", "code": "13320"},
+            {"file_date": "2025-09-02", "code": "13010"},
+        ],
+    )
+
+    con = duckdb.connect()
+    try:
+        data = collect_report_data(con, tmp_path)
+    finally:
+        con.close()
+
+    counts = {(s, n): v for s, n, v in data.layer_counts}
+    assert counts[("cleansed", "jpx_monthly_ohlc")] == 3
+    assert data.jpx_monthly_code_count == 2
+
+
 def _sample_data() -> ReportData:
     return ReportData(
         generated_at=datetime.datetime(2026, 9, 11, 4, 1, 45, tzinfo=JST),
@@ -102,11 +125,13 @@ def _sample_data() -> ReportData:
             ("cleansed", "edinet_documents", 93),
             ("cleansed", "edinet_facts", 10470),
             ("cleansed", "jpx_stq_prices", 4444),
+            ("cleansed", "jpx_monthly_ohlc", 83195),
         ],
         edinet_latest_date="2026-09-10",
         edinet_company_count=93,
         jpx_latest_date="2026-09-10",
         jpx_code_count=4444,
+        jpx_monthly_code_count=4423,
     )
 
 
@@ -117,6 +142,7 @@ def test_render_html_success_contains_counts_and_house_style() -> None:
     assert "10,470" in html
     assert "edinet_facts" in html
     assert "jpx_stq_prices" in html
+    assert "jpx_monthly_ohlc" in html
     assert "2026-09-10" in html
 
 
@@ -133,6 +159,8 @@ def test_summary_text_is_short_and_has_key_numbers() -> None:
     assert "10,470行" in text
     assert "4,444行" in text
     assert "4,444銘柄" in text
+    assert "83,195行" in text
+    assert "4,423銘柄" in text
 
 
 def test_summary_text_when_no_dbt_models() -> None:
@@ -155,6 +183,10 @@ def test_generate_report_end_to_end(tmp_path: Path) -> None:
         tmp_path / "jpx_stq_prices.parquet",
         [{"file_date": "2026-09-10", "code": "1301"}],
     )
+    write_parquet(
+        tmp_path / "jpx_monthly_ohlc.parquet",
+        [{"file_date": "2025-09-01", "code": "13010"}, {"file_date": "2025-09-01", "code": "13320"}],
+    )
 
     html, summary = generate_report(_outcome(ok=True), cleansed_root=str(tmp_path))
 
@@ -163,3 +195,4 @@ def test_generate_report_end_to_end(tmp_path: Path) -> None:
     assert "1社" in summary
     assert "2行" in summary
     assert "1銘柄" in summary
+    assert "2銘柄" in summary

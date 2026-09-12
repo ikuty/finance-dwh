@@ -21,6 +21,7 @@ from pathlib import Path
 from prefect import flow, get_run_logger, task
 
 from flows.load_edinet import load_edinet_csv_facts
+from flows.load_jpx_monthly_ohlc import load_jpx_monthly_ohlc_facts
 from flows.load_jpx_stq import load_jpx_stq_prices
 from flows.notify import send_slack_notification, upload_report_to_s3
 from report.run_report import DbtOutcome, generate_report
@@ -169,7 +170,13 @@ def daily_transform() -> str:
     logger.info(f"landing 取り込み(EDINET): {loaded['dates']} 日 / {loaded['rows']} 行")
 
     jpx_loaded = load_jpx_stq_prices()
-    logger.info(f"landing 取り込み(JPX): {jpx_loaded['dates']} 日 / {jpx_loaded['rows']} 銘柄")
+    logger.info(f"landing 取り込み(JPX形式C): {jpx_loaded['dates']} 日 / {jpx_loaded['rows']} 銘柄")
+
+    jpx_monthly_loaded = load_jpx_monthly_ohlc_facts()
+    logger.info(
+        f"landing 取り込み(JPX形式B): {jpx_monthly_loaded['months']} ヶ月 / "
+        f"{jpx_monthly_loaded['days']} 日 / {jpx_monthly_loaded['rows']} 行"
+    )
 
     result = dbt_build()
 
