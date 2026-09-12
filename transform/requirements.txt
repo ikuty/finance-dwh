@@ -4,3 +4,4 @@ prefect>=3.1,<4
 boto3~=1.43
 duckdb~=1.5
 pyarrow~=25.0
+pdfplumber~=0.11

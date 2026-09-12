@@ -8,3 +8,4 @@ boto3-stubs[s3]~=1.43
 duckdb~=1.5
 pyarrow~=25.0
 pyarrow-stubs
+pdfplumber~=0.11

@@ -9,8 +9,7 @@
   - 最新データ（EDINET の最新 file_date・会社数）
 
 DuckDB はサーバを持たず、cleansed の Parquet ファイルを都度 `read_parquet()` で
-直接読む（接続はプロセス内、常駐なし）。jpx はまだ DuckDB へ移行していないため
-このレポートには含めない（移行時に追加する）。
+直接読む（接続はプロセス内、常駐なし）。
 """
 
 from __future__ import annotations
@@ -31,6 +30,7 @@ CLEANSED_ROOT = os.environ.get("CLEANSED_ROOT", "/data/cleansed")
 COUNTED_RELATIONS: list[tuple[str, str]] = [
     ("cleansed", "edinet_documents"),
     ("cleansed", "edinet_facts"),
+    ("cleansed", "jpx_stq_prices"),
 ]
 
 
@@ -57,6 +57,8 @@ class ReportData:
     layer_counts: list[tuple[str, str, int | None]]
     edinet_latest_date: str | None
     edinet_company_count: int | None
+    jpx_latest_date: str | None = None
+    jpx_code_count: int | None = None
 
 
 def _as_int(value: object) -> int | None:
@@ -97,11 +99,22 @@ def collect_report_data(con: DbConn, cleansed_root: Path) -> ReportData:
             f"from read_parquet('{docs_path.as_posix()}')",
         )
 
+    jpx_path = cleansed_root / "jpx_stq_prices.parquet"
+    jpx_latest, jpx_codes = (None, None)
+    if jpx_path.exists():
+        jpx_latest, jpx_codes = _scalar_pair(
+            con,
+            "select max(file_date), count(distinct code) "
+            f"from read_parquet('{jpx_path.as_posix()}')",
+        )
+
     return ReportData(
         generated_at=datetime.datetime.now(JST),
         layer_counts=layer_counts,
         edinet_latest_date=edinet_latest,
         edinet_company_count=edinet_companies,
+        jpx_latest_date=jpx_latest,
+        jpx_code_count=jpx_codes,
     )
 
 
@@ -129,6 +142,8 @@ def render_html(data: ReportData, dbt: DbtOutcome) -> str:
         [
             f'<tr><td>EDINET 最新 file_date</td><td class="num">{data.edinet_latest_date or "-"}</td></tr>',
             f'<tr><td>EDINET 会社数</td><td class="num">{_fmt_count(data.edinet_company_count)}</td></tr>',
+            f'<tr><td>JPX 最新 file_date</td><td class="num">{data.jpx_latest_date or "-"}</td></tr>',
+            f'<tr><td>JPX 銘柄数</td><td class="num">{_fmt_count(data.jpx_code_count)}</td></tr>',
         ]
     )
 
@@ -178,9 +193,12 @@ def summary_text(data: ReportData, dbt: DbtOutcome) -> str:
     status = "✅ 成功" if dbt.ok else "❌ 失敗"
     facts = next((n for _s, name, n in data.layer_counts if name == "edinet_facts"), None)
     company_n = _fmt_count(data.edinet_company_count)
+    jpx_rows = next((n for _s, name, n in data.layer_counts if name == "jpx_stq_prices"), None)
+    jpx_code_n = _fmt_count(data.jpx_code_count)
     return (
         f"{status} / finance-dwh 日次 / dbt {_dbt_phrase(dbt)} / "
-        f"cleansed: EDINET明細{_fmt_count(facts)}行・{company_n}社"
+        f"cleansed: EDINET明細{_fmt_count(facts)}行・{company_n}社 / "
+        f"JPX相場{_fmt_count(jpx_rows)}行・{jpx_code_n}銘柄"
     )
 
 

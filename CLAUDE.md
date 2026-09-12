@@ -44,9 +44,23 @@ Prefect + docker compose** で構築する。全体像は `docs/architecture.md`
   から DuckDB が Hive パーティショニングを自動検出し、ファイル内の file_date 列
   （VARCHAR で書いている）を DATE 型の値で上書きしてしまう実機確認済みの挙動がある。
   書き込み自体は常に正しい）。
-- **JPX は未移行**（今回のスコープ外）。Postgres 版にあった `jpx_catalog_fdw.py`（ファイル
-  目録のみ、PDF/TIFF の中身は扱わない）は削除済み（git 履歴に残る）。再着手時は DuckDB の
-  `glob()` で素直に書き直せる見込み。
+- **JPX 形式C（株式相場表・詳細日次）は PDF テキスト化＋構造化まで実装済み**（2026-09-13）。
+  レイクの PDF（`jpx-daily-pdf-dl/raw/detailed-daily/{yyyy}/{mm}/{dd}/stq.pdf`）から
+  セクション1（立会市場普通取引）の銘柄別明細を取り出す。単純なテキスト抽出では
+  PDF 生成時の描画順序により列順が保持されないことを実機で確認したため、
+  `pdfplumber` で座標（x0）とフォントサイズを保持した単語データを取り出す
+  Stage1（`jpx_stq_pdf.py`、landing.jpx_stq_words）と、そこから銘柄別明細に
+  構造化する Stage2（`jpx_stq_facts.py`、landing.jpx_stq_facts）に分離した
+  （EDINET と同じ「重い処理と変わりやすいロジックを分ける」考え方）。cleansed
+  （`cleansed__jpx__stq_prices`）は毎回全量 rebuild（EDINET と同じ理由。実測
+  28日分・124,403行の型付けが0.024秒で、incremental 化の理由が無い）。
+  検証として dbt の singular テストで **OHLC整合性**（前場・後場それぞれ
+  安値<=始値・終値<=高値）と **VWAP再計算**（売買代金÷売買高との照合、列の
+  取り違えを検出できる検算）を追加した。詳細は `docs/raw_landing_design.md`
+  「JPX 形式C」参照。形式A・形式B、セクション1以外の取引種別（ToSTNeT等）は
+  未対応（今回のスコープ外、Stage1 は全ページ分保持しているため対象を広げても
+  Stage1 の再実行は不要）。Postgres 版にあった `jpx_catalog_fdw.py`（ファイル
+  目録のみ）は削除済み（git 履歴に残る）。
 - **Prefect は ephemeral 実行**（常駐サーバ・ワーカーなし）。フロー `daily_transform` を
   `python -m flows.daily_transform` で単発実行。UI が要るようになったら通電枠限定の
   `prefect-server` compose サービスを後付け。
@@ -62,7 +76,8 @@ Prefect + docker compose** で構築する。全体像は `docs/architecture.md`
 ## 依存
 
 Python 3.12。外部依存は `transform/` のみ: `dbt-core` / `dbt-duckdb` / `duckdb` /
-`pyarrow` / `prefect` / `boto3`。開発は `requirements-dev.txt`（+ `mypy` / `pytest` /
+`pyarrow` / `prefect` / `boto3` / `pdfplumber`（JPX PDF のテキスト化、`py.typed`
+同梱のため追加 stub 不要）。開発は `requirements-dev.txt`（+ `mypy` / `pytest` /
 `boto3-stubs` / `pyarrow-stubs`）。`mypy --strict` + `pytest`。CSV 抽出ロジック
 （`transform/fdw/edinet_csv_fdw.py`）は標準ライブラリのみ。
 
@@ -86,15 +101,17 @@ finance-lake-shutdown.service` の `After=` には `finance-dwh-transform.servic
 既に追記済み（`finance-dwh-postgres.service` への参照はそもそも含まれていないため、
 今回の Postgres 撤去にあたって finance-lake 側の変更は不要だった）。
 
-## 現状（2026-09-11 時点）
+## 現状（2026-09-13 時点）
 
-- DuckDB/Parquet 化を実装・ローカル検証済み（コンテナ含む）。raw（doc index の直接
-  glob 読み）、landing（edinet_csv_facts、日付単位 Parquet）、cleansed
-  （edinet__documents / edinet__facts、毎回 rebuild）、Prefect フロー（load → dbt →
-  レポート/S3/Slack）、docker compose（transform 単一サービス、常駐なし）、systemd
-  （transform のみ）、GitHub Actions 3 本（ci / build-push / deploy）を更新。
-- ローカルでレイクの実構造サンプルに対し pytest 38 / mypy --strict / コンテナでの
-  フルフロー緑（`✅ 成功 ... cleansed: EDINET明細10,470行・70社`、8.2秒）。
-- 未了: コミット → push → Mac Mini への反映・実スケール（2000万行超）での性能検証、
-  jpx / mart の DuckDB 移行、Postgres 版の landing データ（Mac Mini 上の pgdata）の
-  後始末。
+- DuckDB/Parquet 化・Mac Mini への反映・実スケール性能検証まで完了（2026-09-12、
+  EDINET 460日/20,583,925行の landing 取り込みが約17.5分、`dbt build` が9分11秒
+  で完走、Postgres 版初回backfillの約71分から半減）。
+- JPX 形式C（株式相場表・詳細日次）の PDF テキスト化・構造化を実装・実データ
+  28日分で検証済み（`raw_landing_design.md`「JPX 形式C」参照）。`daily_transform`
+  フローに組み込み済み、レポート（`run_report.py`）にも JPX の最新日・銘柄数を
+  追加。
+- pytest 60件 / mypy --strict パス（コンテナでのフルフロー含む実データ検証は
+  ローカルで実施、Mac Mini への反映はこれから）。
+- 未了: JPX 追加分のコミット → push → Mac Mini への反映、mart 層の設計、
+  jpx のファイル目録（raw層）・形式A/B・セクション1以外の取引種別、Postgres 版の
+  landing データ（Mac Mini 上の pgdata）の後始末。

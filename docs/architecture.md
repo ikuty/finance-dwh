@@ -25,9 +25,9 @@ git 履歴（`afc45c7`〜`5ea9b52`）に残る。
 
 | 層 | 実体 | 現状 |
 |---|---|---|
-| raw | DuckDB の view モデル（doc index）。レイクを直接 glob 読み | **doc index のみ** |
-| landing | Parquet（`{DATA_DIR}/landing/edinet_csv_facts/file_date=*/part.parquet`）。Prefect の `load_edinet` が日付単位で書く | **edinet_csv_facts のみ** |
-| cleansed | dbt-duckdb の external materialization（Parquet）。型付け・名寄せ、毎回 rebuild | **edinet__documents / edinet__facts のみ** |
+| raw | DuckDB の view モデル（doc index）。レイクを直接 glob 読み | **doc index のみ**（JPX のファイル目録は未実装） |
+| landing | Parquet（`{DATA_DIR}/landing/{table}/file_date=*/part.parquet`）。Prefect の `load_edinet` / `load_jpx_stq` が日付単位で書く | **edinet_csv_facts / jpx_stq_words / jpx_stq_facts** |
+| cleansed | dbt-duckdb の external materialization（Parquet）。型付け・名寄せ、毎回 rebuild | **edinet__documents / edinet__facts / jpx__stq_prices** |
 | mart | dbt モデル（業務エンティティ） | **未設計** |
 
 - 命名: raw/cleansed は `<層>__<内容>`（例: `raw__edinet_document_index`、
@@ -47,10 +47,13 @@ git 履歴（`afc45c7`〜`5ea9b52`）に残る。
 |---|---|---|
 | `raw__edinet_document_index` | 書類一覧 API 生レスポンス `results[]`（1行=1書類、29項目 + file_date） | dbt view モデル。`read_json_auto()` でレイクの `response/*/*/*/document_list.json` を直接 glob 読み |
 | `landing.edinet_csv_facts`（source） | EDINET CSV(type=5) 全書類の明細（縦持ち、provenance 3列 + 9列） | Parquet、`edinet_csv_fdw.py` が日付ごとにパースして書く |
+| `landing.jpx_stq_words` | JPX 形式C(株式相場表・詳細日次) PDF の座標付き単語データ（page/top/x0/x1/size/text） | Parquet、`jpx_stq_pdf.py`（pdfplumber）が日付ごとにPDF全体を機械的に変換 |
+| `landing.jpx_stq_facts`（source） | セクション1(立会市場普通取引)の銘柄別明細（全列text、`_loaded_at`付き） | Parquet、`jpx_stq_facts.py` が `jpx_stq_words` を構造化 |
 
-jpx（相場表 PDF/TIFF のファイル目録）は今回のスコープ外。Postgres 版にあった
+JPX のファイル目録（形式A/B含む raw 層）は未実装。Postgres 版にあった
 `jpx_catalog_fdw.py` は削除済み（git 履歴に残る、再着手時は DuckDB の `glob()` で
-書き直せる見込み）。
+書き直せる見込み）。JPX 形式Cの詳細設計は `docs/raw_landing_design.md`「JPX 形式C」
+参照。
 
 ## 実行モデル（Mac Mini）
 
@@ -67,22 +70,26 @@ jpx（相場表 PDF/TIFF のファイル目録）は今回のスコープ外。P
   transform は `After=` で lake の両ジョブ完了を待ち、共有シャットダウンは `After=` で
   transform 完了を待つ。詳細は `deployment_design.md`。
 
-## 実測（性能比較、2026-09-11）
+## 実測（性能比較）
 
-| | Postgres + file_fdw | DuckDB + Parquet |
+| | Postgres + file_fdw（2026-09-11） | DuckDB + Parquet（実スケール、2026-09-12、Mac Mini） |
 |---|---|---|
 | `raw__edinet_csv_facts` の `count(*)`（20.5M行・全量） | 約12分 | （landing 経由のため直接該当せず。cleansed の行数カウントは高速） |
-| landing/cleansed の初回フルビルド | load 35.5分 + dbt build 35分 ≈ 71分 | 同等データで dbt build 0.2秒（ローカルサンプル規模） |
-| 日次実行（コンテナ起動込み） | 数十秒〜数分（実機実測 56秒） | 8.2秒（ローカルサンプル規模、コンテナ込み） |
+| landing/cleansed の初回フルビルド | load 35.5分 + dbt build 35分 ≈ 71分 | landing 取り込み 460日/20,583,925行 約17.5分 + dbt build 9分11秒（460日超・960万行超）≈ 27分 |
 
-実スケール（2000万行超）での DuckDB 側の性能は Mac Mini 反映後に確認する
-（`docs/raw_landing_design.md` の「既知の制約」参照）。
+実スケール（460日・2000万行超）での DuckDB 側の性能を Mac Mini 実機で確認し、
+Postgres 版（約71分）から半減した。JPX 形式C（280日規模・最大124万行）は
+さらに小規模で、ローカル実測では型付け変換が0.024秒（28日/124,403行）。
 
-## 実装状況（2026-09-11 時点）
+## 実装状況（2026-09-13 時点）
 
-- raw（doc index の view）、landing（edinet_csv_facts、日付単位 Parquet）、cleansed
-  （edinet__documents / edinet__facts、毎回 rebuild）、Prefect フロー、docker compose
-  （transform 単一サービス）、systemd（transform のみ）、GitHub Actions 3 本まで実装・
-  ローカル検証（コンテナ含む）済み。
-- 未了: コミット → push → Mac Mini への反映・実スケールでの性能検証、jpx / mart の
-  DuckDB 移行、Mac Mini 上の Postgres 版データ（pgdata）の後始末。
+- raw（doc index の view）、landing（edinet_csv_facts / jpx_stq_words /
+  jpx_stq_facts、日付単位 Parquet）、cleansed（edinet__documents / edinet__facts /
+  jpx__stq_prices、毎回 rebuild）、Prefect フロー、docker compose（transform 単一
+  サービス）、systemd（transform のみ）、GitHub Actions 3 本まで実装済み。
+- EDINET は Mac Mini への反映・実スケール（2000万行超）性能検証まで完了
+  （2026-09-12）。JPX 形式Cはローカルで実データ28日分・dbt build まで検証済み、
+  Mac Mini への反映はこれから。
+- 未了: JPX 追加分の Mac Mini への反映、mart の設計、jpx のファイル目録（raw層）・
+  形式A/B・セクション1以外の取引種別、Mac Mini 上の Postgres 版データ（pgdata）の
+  後始末。

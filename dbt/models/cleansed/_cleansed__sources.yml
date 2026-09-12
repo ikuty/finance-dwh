@@ -13,3 +13,11 @@ sources:
         description: "EDINET CSV 明細（縦持ち、全列 text）。file_date=YYYY-MM-DD で日付分割。"
         meta:
           external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/edinet_csv_facts/*/part.parquet', hive_partitioning=false)"
+      - name: jpx_stq_facts
+        description: >
+          JPX 形式C（株式相場表・詳細日次）セクション1（立会市場普通取引）の
+          銘柄別明細（全列 text）。file_date=YYYY-MM-DD で日付分割。
+          load_jpx_stq_prices タスクが Stage1(jpx_stq_pdf)→Stage2(jpx_stq_facts)
+          を経て書く（詳細は docs/raw_landing_design.md 参照）。
+        meta:
+          external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/jpx_stq_facts/*/part.parquet', hive_partitioning=false)"

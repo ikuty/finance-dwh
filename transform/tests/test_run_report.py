@@ -66,8 +66,33 @@ def test_collect_report_data_counts_and_missing_file(tmp_path: Path) -> None:
     counts = {(s, n): v for s, n, v in data.layer_counts}
     assert counts[("cleansed", "edinet_documents")] == 3
     assert counts[("cleansed", "edinet_facts")] is None
+    assert counts[("cleansed", "jpx_stq_prices")] is None
     assert data.edinet_latest_date == "2026-09-10"
     assert data.edinet_company_count == 3
+    assert data.jpx_latest_date is None
+    assert data.jpx_code_count is None
+
+
+def test_collect_report_data_counts_jpx_when_present(tmp_path: Path) -> None:
+    write_parquet(
+        tmp_path / "jpx_stq_prices.parquet",
+        [
+            {"file_date": "2026-09-10", "code": "1301"},
+            {"file_date": "2026-09-09", "code": "1332"},
+            {"file_date": "2026-09-10", "code": "1301"},
+        ],
+    )
+
+    con = duckdb.connect()
+    try:
+        data = collect_report_data(con, tmp_path)
+    finally:
+        con.close()
+
+    counts = {(s, n): v for s, n, v in data.layer_counts}
+    assert counts[("cleansed", "jpx_stq_prices")] == 3
+    assert data.jpx_latest_date == "2026-09-10"
+    assert data.jpx_code_count == 2
 
 
 def _sample_data() -> ReportData:
@@ -76,9 +101,12 @@ def _sample_data() -> ReportData:
         layer_counts=[
             ("cleansed", "edinet_documents", 93),
             ("cleansed", "edinet_facts", 10470),
+            ("cleansed", "jpx_stq_prices", 4444),
         ],
         edinet_latest_date="2026-09-10",
         edinet_company_count=93,
+        jpx_latest_date="2026-09-10",
+        jpx_code_count=4444,
     )
 
 
@@ -88,6 +116,7 @@ def test_render_html_success_contains_counts_and_house_style() -> None:
     assert "✅ 成功" in html
     assert "10,470" in html
     assert "edinet_facts" in html
+    assert "jpx_stq_prices" in html
     assert "2026-09-10" in html
 
 
@@ -102,6 +131,8 @@ def test_summary_text_is_short_and_has_key_numbers() -> None:
     assert text.startswith("✅ 成功")
     assert "93社" in text
     assert "10,470行" in text
+    assert "4,444行" in text
+    assert "4,444銘柄" in text
 
 
 def test_summary_text_when_no_dbt_models() -> None:
@@ -120,6 +151,10 @@ def test_generate_report_end_to_end(tmp_path: Path) -> None:
         tmp_path / "edinet_facts.parquet",
         [{"edinet_code": "E00011", "value_num": 1000}, {"edinet_code": "E00011", "value_num": 2000}],
     )
+    write_parquet(
+        tmp_path / "jpx_stq_prices.parquet",
+        [{"file_date": "2026-09-10", "code": "1301"}],
+    )
 
     html, summary = generate_report(_outcome(ok=True), cleansed_root=str(tmp_path))
 
@@ -127,3 +162,4 @@ def test_generate_report_end_to_end(tmp_path: Path) -> None:
     assert summary.startswith("✅ 成功")
     assert "1社" in summary
     assert "2行" in summary
+    assert "1銘柄" in summary
