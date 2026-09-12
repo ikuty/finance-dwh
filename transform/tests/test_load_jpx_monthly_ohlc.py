@@ -31,9 +31,21 @@ def make_month_pdf(lake: Path, month: str) -> None:
     path.write_bytes(b"dummy")
 
 
+def header_row(page: int) -> list[jpx_stq_pdf.Word]:
+    """列境界の動的検出に必要なヘッダー行(実測座標、iText世代)。"""
+    labels = [
+        (52.7, 90.0, "約定年月日"), (90.0, 127.1, "銘柄コード"), (127.1, 152.6, "銘柄名称"),
+        (306.4, 331.9, "前場始値"), (336.1, 361.6, "前場高値"), (365.8, 391.3, "前場安値"),
+        (395.5, 421.0, "前場終値"), (425.2, 450.7, "後場始値"), (454.9, 480.4, "後場高値"),
+        (484.6, 510.1, "後場安値"), (514.3, 539.8, "後場終値"),
+    ]
+    return [jpx_stq_pdf.Word(page=page, top=46.0, x0=x0, x1=x1, size=6.36, text=t) for x0, x1, t in labels]
+
+
 def sample_words_two_days(page: int) -> list[jpx_stq_pdf.Word]:
     """2025-09-01(1301)・2025-09-02(1332)の2日ぶんを1PDF(2ページ)想定で返す。"""
     return [
+        *header_row(page),
         # 2025-09-01, code 1301
         jpx_stq_pdf.Word(page=page, top=56.0, x0=54.4, x1=82.7, size=6.36, text="20250901"),
         jpx_stq_pdf.Word(page=page, top=56.0, x0=97.0, x1=114.7, size=6.36, text="1301"),
