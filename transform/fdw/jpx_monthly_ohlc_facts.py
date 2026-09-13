@@ -26,13 +26,23 @@ AntennaHouse世代は銘柄コードと銘柄名称が**スペース無しで1�
 アルファベットが続くため、この判定に引っかからず正しく1トークンのまま
 コードとして扱われる。
 
+**単語はページ単位でストリーム処理し、月全体を一度にメモリへ保持しない**
+（2026-09-13、実機で発見・修正）。69ヶ月一括バックフィルの実行中、Mac Mini
+（物理メモリ7.7GB）でメモリ逼迫（`Under memory pressure, flushing caches`の
+連発）が発生し、tailscaledがタイムアウトでダウンし外部から到達不能になる
+障害を実機で確認した。原因は月全体の単語（実測100万語超、1ヶ月ぶんのPDF
+1200ページ超）を`list()`で一度にメモリに保持していたこと。ページの境界を
+またいで必要な状態はヘッダー座標（`_HeaderLayout`）だけであり、1ページの
+単語（実測ではページあたり高々千語程度）を処理し終えたら破棄してよいため、
+ページ単位でストリーム処理する設計に変更した。
+
 詳細設計はdocs/raw_landing_design.md参照。
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass, fields
 
 from jpx_stq_pdf import Word
@@ -138,78 +148,98 @@ def _to_file_date(raw: str) -> str | None:
     return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
 
 
-def build_records(words: Sequence[Word]) -> list[FactRow]:
-    """全ページの単語データを、銘柄×日付の1行1レコードへ構造化する。
+def _process_page(
+    page_words: list[Word], layout: _HeaderLayout | None
+) -> tuple[_HeaderLayout | None, list[FactRow]]:
+    """1ページぶんの単語から明細行を構造化する。ヘッダー(列境界)はページを
+    またいで引き継ぐため引数・返り値の両方で受け渡す。"""
+    records: list[FactRow] = []
+    rows: dict[int, list[Word]] = {}
+    for w in page_words:
+        rows.setdefault(round(w.top), []).append(w)
 
-    先頭で見つかったヘッダー行から列境界を算出し、以降のページでも
-    (通常は同一の)ヘッダー行が見つかるたびに更新する。
+    for top in sorted(rows):
+        row_words = sorted(rows[top], key=lambda w: w.x0)
+
+        detected = _detect_header(row_words)
+        if detected is not None:
+            layout = detected
+            continue
+        if _is_header_fragment(row_words):
+            continue  # ヘッダーの断片(検出しきれなかった行)も無視
+        if layout is None:
+            continue  # まだヘッダー未検出(想定外、安全側に倒して破棄)
+
+        date_word = next((w for w in row_words if w.x0 < layout.date_code_boundary), None)
+        code_name_words = [
+            w for w in row_words if layout.date_code_boundary <= w.x0 < layout.name_area_end
+        ]
+        if date_word is None or not code_name_words:
+            continue
+        file_date = _to_file_date(date_word.text)
+        if file_date is None:
+            continue
+
+        code, name_head = _split_code_name(code_name_words[0].text)
+        name_rest = [w.text for w in code_name_words[1:]]
+        name_parts = ([name_head] if name_head else []) + name_rest
+        name_ja = "　".join(p for p in name_parts if p) or None
+
+        cells: dict[str, list[str]] = {}
+        for w in row_words:
+            if w is date_word or w in code_name_words:
+                continue
+            field = _ohlc_field_for_x1(layout, w.x1)
+            if field is not None:
+                cells.setdefault(field, []).append(w.text)
+
+        def cell(field: str) -> str | None:
+            parts = cells.get(field)
+            return "".join(parts) if parts else None
+
+        records.append(
+            FactRow(
+                file_date=file_date,
+                code=code,
+                name_ja=name_ja,
+                am_open=cell("am_open"),
+                am_high=cell("am_high"),
+                am_low=cell("am_low"),
+                am_close=cell("am_close"),
+                pm_open=cell("pm_open"),
+                pm_high=cell("pm_high"),
+                pm_low=cell("pm_low"),
+                pm_close=cell("pm_close"),
+            )
+        )
+
+    return layout, records
+
+
+def build_records(words: Iterable[Word]) -> list[FactRow]:
+    """単語データを、銘柄×日付の1行1レコードへ構造化する。
+
+    `words`はページ順に並んでいる前提でページ単位にバッファし、ページの
+    境界を検出した時点でそのページを処理して単語バッファを破棄する
+    （月全体の単語、実測100万語超を一度にメモリへ保持しない。実機での
+    メモリ逼迫を踏まえた設計、モジュールdocstring参照）。ヘッダー
+    (列境界)はページをまたいで引き継ぐ。
     """
-    by_page: dict[int, list[Word]] = {}
-    for w in words:
-        by_page.setdefault(w.page, []).append(w)
-
     records: list[FactRow] = []
     layout: _HeaderLayout | None = None
+    current_page: int | None = None
+    page_words: list[Word] = []
 
-    for page in sorted(by_page):
-        page_words = sorted(by_page[page], key=lambda w: (w.top, w.x0))
-        rows: dict[int, list[Word]] = {}
-        for w in page_words:
-            rows.setdefault(round(w.top), []).append(w)
+    for w in words:
+        if current_page is not None and w.page != current_page:
+            layout, page_records = _process_page(page_words, layout)
+            records.extend(page_records)
+            page_words = []
+        current_page = w.page
+        page_words.append(w)
 
-        for top in sorted(rows):
-            row_words = sorted(rows[top], key=lambda w: w.x0)
-
-            detected = _detect_header(row_words)
-            if detected is not None:
-                layout = detected
-                continue
-            if _is_header_fragment(row_words):
-                continue  # ヘッダーの断片(検出しきれなかった行)も無視
-            if layout is None:
-                continue  # まだヘッダー未検出(想定外、安全側に倒して破棄)
-
-            date_word = next((w for w in row_words if w.x0 < layout.date_code_boundary), None)
-            code_name_words = [
-                w for w in row_words if layout.date_code_boundary <= w.x0 < layout.name_area_end
-            ]
-            if date_word is None or not code_name_words:
-                continue
-            file_date = _to_file_date(date_word.text)
-            if file_date is None:
-                continue
-
-            code, name_head = _split_code_name(code_name_words[0].text)
-            name_rest = [w.text for w in code_name_words[1:]]
-            name_parts = ([name_head] if name_head else []) + name_rest
-            name_ja = "　".join(p for p in name_parts if p) or None
-
-            cells: dict[str, list[str]] = {}
-            for w in row_words:
-                if w is date_word or w in code_name_words:
-                    continue
-                field = _ohlc_field_for_x1(layout, w.x1)
-                if field is not None:
-                    cells.setdefault(field, []).append(w.text)
-
-            def cell(field: str) -> str | None:
-                parts = cells.get(field)
-                return "".join(parts) if parts else None
-
-            records.append(
-                FactRow(
-                    file_date=file_date,
-                    code=code,
-                    name_ja=name_ja,
-                    am_open=cell("am_open"),
-                    am_high=cell("am_high"),
-                    am_low=cell("am_low"),
-                    am_close=cell("am_close"),
-                    pm_open=cell("pm_open"),
-                    pm_high=cell("pm_high"),
-                    pm_low=cell("pm_low"),
-                    pm_close=cell("pm_close"),
-                )
-            )
+    if page_words:
+        layout, page_records = _process_page(page_words, layout)
+        records.extend(page_records)
 
     return records

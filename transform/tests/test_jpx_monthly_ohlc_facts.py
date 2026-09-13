@@ -186,11 +186,40 @@ def test_build_records_ignores_repeated_header_row() -> None:
     assert [r.file_date for r in records] == ["2023-01-04", "2023-01-05"]
 
 
+def test_build_records_accepts_one_shot_generator() -> None:
+    """build_recordsはSequenceではなくIterableを受け取る(月全体をlist化しない
+    ためのストリーム処理、2026-09-13修正)。一度しか反復できないジェネレータ
+    (list()化されていない`jpx_stq_pdf.iter_words`相当)でも動作することを検証。"""
+    words = [
+        *header_itext(1),
+        *itext_data_row(1, 57.0, "20230104", "13010", [(127.2, 139.9, "極洋")], VALUES_ITEXT),
+    ]
+    records = m.build_records(w for w in words)  # ジェネレータ式(一度しか反復不可)
+    assert len(records) == 1
+    assert records[0].code == "13010"
+
+
 def test_build_records_no_header_yet_discards_rows() -> None:
     """ヘッダーが見つかる前のデータ行(想定外)は安全側に倒して破棄する。"""
     words = itext_data_row(1, 57.0, "20230104", "13010", [(127.2, 139.9, "極洋")], VALUES_ITEXT)
     records = m.build_records(words)
     assert records == []
+
+
+def test_build_records_header_only_on_first_page_carries_across_pages() -> None:
+    """実データは全ページにヘッダーが繰り返されるが、ページ単位ストリーム処理
+    (2026-09-13修正)がヘッダー無しページでも直前の列境界を正しく引き継ぐことを
+    明示的に検証する回帰テスト。"""
+    words = [
+        *header_itext(1),
+        *itext_data_row(2, 57.0, "20230104", "13010", [(127.2, 139.9, "極洋")], VALUES_ITEXT),
+        *itext_data_row(3, 57.0, "20230105", "13320", [(127.2, 152.5, "ニッスイ")], VALUES_ITEXT),
+    ]
+    records = m.build_records(words)
+    assert [(r.file_date, r.code, r.am_open) for r in records] == [
+        ("2023-01-04", "13010", "3815"),
+        ("2023-01-05", "13320", "3815"),
+    ]
 
 
 def test_build_records_spans_multiple_dates_and_pages() -> None:

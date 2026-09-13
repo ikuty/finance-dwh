@@ -93,7 +93,10 @@ def load_one_month(lake_root: Path, landing_root: Path, month: str) -> dict[str,
 
     戻り値は {"days": 書き出した日数, "rows": 総レコード数}。
     """
-    words = list(jpx_stq_pdf.iter_words(_pdf_path(lake_root, month)))
+    # words は list() 化せず、ジェネレータのままStage2へ渡す(1ヶ月ぶんを一度に
+    # メモリへ保持しないため。実機でのメモリ逼迫を踏まえた修正、
+    # jpx_monthly_ohlc_facts.pyのモジュールdocstring参照)。
+    words = jpx_stq_pdf.iter_words(_pdf_path(lake_root, month))
     records = jpx_monthly_ohlc_facts.build_records(words)
 
     by_date: dict[str, list[jpx_monthly_ohlc_facts.FactRow]] = defaultdict(list)

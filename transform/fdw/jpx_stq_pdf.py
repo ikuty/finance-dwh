@@ -11,6 +11,16 @@ PDFにおいて列の並び順が保持されないことを実機データで�
 意味づけ等、今後何度も変わる想定)を直すたびに、PDF抽出(実測 約36秒/日)を
 再実行しなくて済む。
 
+**ページ処理後に`page.flush_cache()`を呼ぶ**（2026-09-13、実機のメモリ
+逼迫障害を踏まえた修正）。pdfplumberは`extract_words()`の内部で使う文字
+単位のデータ等をページごとに内部キャッシュし、明示的に破棄しない限り
+`PDF`オブジェクトの生存期間中(=このジェネレータを消費し終えるまで)ずっと
+保持し続ける。1200ページ超の月次PDF(形式B)でこれを未対策のまま流したところ、
+ピークメモリが約9.8GBに達し、Mac Mini(物理メモリ7.7GB)でメモリ逼迫
+（`Under memory pressure`の連発、tailscaledのダウンによる外部からの
+到達不能）を実機で引き起こした。`flush_cache()`を呼ぶことでピークメモリが
+約109MBまで下がることを実測済み（詳細はdocs/raw_landing_design.md参照）。
+
 詳細はdocs/raw_landing_design.md参照。
 """
 
@@ -51,3 +61,4 @@ def iter_words(pdf_path: Path) -> Iterator[Word]:
                     size=w.get("size", 0.0),
                     text=w["text"],
                 )
+            page.flush_cache()  # ページ単位の内部キャッシュを破棄(メモリ逼迫対策)
