@@ -3,9 +3,23 @@
 Prefect の ephemeral モードで単発実行する（常駐サーバ・ワーカーは持たない）:
     python -m flows.daily_transform
 
-流れ: landing 取り込み → dbt build → 実行レポート生成 → S3 アップロード → Slack 通知。
+流れ: landing 取り込み(EDINET/JPX形式C) → dbt build → 実行レポート生成 →
+S3 アップロード → Slack 通知 → landing 取り込み(JPX形式B・過去分バックフィル)。
 DuckDB は組み込み型（サーバなし）のため、Postgres 版にあった起動待ちは無い。
 dbt が失敗してもレポート生成・S3・Slack までは実行し、最後に非ゼロ終了する。
+
+JPX形式Bの取り込みを最後に置いているのは、日次の本質的な処理(EDINET/JPX形式Cの
+取り込み・dbt build・レポート・Slack通知)を確実に電源枠内で終わらせるため
+（2026-09-14、実機障害を踏まえて変更。詳細はdocs/deployment_design.md参照）。
+形式Bは一回限りの確定済み過去アーカイブのバックフィルであり、Mac Miniの
+Tapoスケジュール電源は固定2時間枠でシステムの`shutdown`より先に物理的に電源を
+落とすため、`finance-lake-shutdown.service`の「実行中のジョブを待ってから
+シャットダウン」という設計は機能しない（そもそも起動されない）。形式Bを
+dbt build等より前に置いていた旧実装では、形式Bの処理が長引いた月に
+dbt build/レポート/Slack通知が一度も実行されずに電源が落ちる事象が実機で
+発生した(2026-09-13)。形式Bを最後に回せば、電源枠が尽きて処理が中断されても
+landingのアトミック書き込み(月単位)により安全に次回へ持ち越せるうえ、
+日次の本質的な処理は毎回確実に完了する。
 """
 
 from __future__ import annotations
@@ -172,16 +186,19 @@ def daily_transform() -> str:
     jpx_loaded = load_jpx_stq_prices()
     logger.info(f"landing 取り込み(JPX形式C): {jpx_loaded['dates']} 日 / {jpx_loaded['rows']} 銘柄")
 
+    result = dbt_build()
+
+    html, summary = build_report(result)
+    summary = publish_and_notify(html, summary)
+
+    # JPX形式B(過去分バックフィル)は日次の本質的な処理より後に回す(理由は
+    # モジュールdocstring参照)。ここで電源枠が尽きて中断されても、landingは
+    # 月単位アトミック書き込みのため安全に次回実行へ持ち越される。
     jpx_monthly_loaded = load_jpx_monthly_ohlc_facts()
     logger.info(
         f"landing 取り込み(JPX形式B): {jpx_monthly_loaded['months']} ヶ月 / "
         f"{jpx_monthly_loaded['days']} 日 / {jpx_monthly_loaded['rows']} 行"
     )
-
-    result = dbt_build()
-
-    html, summary = build_report(result)
-    summary = publish_and_notify(html, summary)
 
     logger.info(summary)
     if not result.ok:

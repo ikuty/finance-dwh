@@ -83,6 +83,28 @@ shutdown 側の `After=` がこのサービスを「実行中」と認識でき�
 参照はそもそも含まれていなかったため、今回の Postgres 撤去にあたって finance-lake
 側の変更は不要）。
 
+### 落とし穴: `After=` による「待つ」はTapoの物理電源遮断には勝てない（2026-09-13実機障害）
+
+`finance-lake-shutdown.service`は`After=`（`Requires=`/`Wants=`無し、純粋な順序制約）
+により「該当サービスが実行中なら起動を遅らせる」設計だが、これはsystemdの`shutdown`
+コマンドが実行される場合の話であり、**Tapoスマートプラグは固定2時間枠の終端でOSの
+状態に関わらず物理的に電源を遮断する**。実機でJPX形式Bバックフィル
+（`load_jpx_monthly_ohlc_facts`、当時は`dbt_build`より前に配置）が長引いた日、
+`finance-lake-shutdown.timer`は04:02:00 JSTに発火したものの、`finance-dwh-transform.service`
+がまだactivating状態だったため`finance-lake-shutdown.service`の起動自体が
+（`journalctl`にStarting行すら無いまま）待たされ続け、そのままTapoの電源枠終端で
+マシンごと強制停止した。結果、**`dbt_build`/`build_report`/`publish_and_notify`が
+その日一度も実行されず、Slack通知が飛ばず、cleansed層も更新されないまま**次の起動を
+迎えた。
+
+対策として、`transform/flows/daily_transform.py`のタスク順序を変更し、**JPX形式B
+バックフィルを`dbt_build`/`build_report`/`publish_and_notify`より後に回した**
+（2026-09-14）。形式Bは一回限りの確定済み過去アーカイブであり、landingは月単位
+アトミック書き込みのため中断されても安全に持ち越せる一方、EDINET/JPX形式Cの日次
+取り込み・dbt build・レポート・Slack通知は毎回確実に完了させたい非対称な性質を持つ
+ため、この順序が両者の要求に合う。unit側（`After=`）の変更は行っていない（原理的な
+限界がunit側の設定だけでは解消できないため、フロー側のタスク順序で対処した）。
+
 ## Postgres → DuckDB 移行手順（Mac Mini、既存デプロイからの切り替え）
 
 Postgres 版が既に Mac Mini 上で稼働・初回バックフィル済みの状態からの移行。
