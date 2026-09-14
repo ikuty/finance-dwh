@@ -29,6 +29,11 @@ services:
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
       AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION:-ap-northeast-1}"
       SLACK_WEBHOOK_URL: "${SLACK_WEBHOOK_URL:-}"
+      # Prefectのephemeralサーバ起動タイムアウト既定値(20秒)はMac Mini実機でギリギリ
+      # （実測20〜21秒）で、2026-09-14に3回連続でRuntimeError: Timed out while
+      # attempting to connect to ephemeral Prefect API serverとして実際に失敗した。
+      # 60秒へ緩和する（他の設定はデフォルトのまま）。
+      PREFECT_SERVER_EPHEMERAL_STARTUP_TIMEOUT_SECONDS: "60"
     volumes:
       - "${LAKE_DIR:?LAKE_DIR を .env で指定してください}:/lake:ro"
       # .duckdb カタログ・landing・cleansed の Parquet はここに永続化される（HDD 側）。
