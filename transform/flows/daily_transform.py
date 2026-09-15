@@ -3,23 +3,30 @@
 Prefect の ephemeral モードで単発実行する（常駐サーバ・ワーカーは持たない）:
     python -m flows.daily_transform
 
-流れ: landing 取り込み(EDINET/JPX形式C) → dbt build → 実行レポート生成 →
-S3 アップロード → Slack 通知 → landing 取り込み(JPX形式B・過去分バックフィル)。
-DuckDB は組み込み型（サーバなし）のため、Postgres 版にあった起動待ちは無い。
-dbt が失敗してもレポート生成・S3・Slack までは実行し、最後に非ゼロ終了する。
+流れ: landing 取り込み(EDINET/JPX形式C・直近分のみ) → dbt build → 実行レポート
+生成 → S3 アップロード → Slack 通知 → landing 取り込み(JPX形式C・バックログ、
+JPX形式B・過去分バックフィル)。DuckDB は組み込み型（サーバなし）のため、
+Postgres 版にあった起動待ちは無い。dbt が失敗してもレポート生成・S3・Slack
+までは実行し、最後に非ゼロ終了する。
 
-JPX形式Bの取り込みを最後に置いているのは、日次の本質的な処理(EDINET/JPX形式Cの
-取り込み・dbt build・レポート・Slack通知)を確実に電源枠内で終わらせるため
-（2026-09-14、実機障害を踏まえて変更。詳細はdocs/deployment_design.md参照）。
-形式Bは一回限りの確定済み過去アーカイブのバックフィルであり、Mac Miniの
-Tapoスケジュール電源は固定2時間枠でシステムの`shutdown`より先に物理的に電源を
-落とすため、`finance-lake-shutdown.service`の「実行中のジョブを待ってから
-シャットダウン」という設計は機能しない（そもそも起動されない）。形式Bを
-dbt build等より前に置いていた旧実装では、形式Bの処理が長引いた月に
-dbt build/レポート/Slack通知が一度も実行されずに電源が落ちる事象が実機で
-発生した(2026-09-13)。形式Bを最後に回せば、電源枠が尽きて処理が中断されても
-landingのアトミック書き込み(月単位)により安全に次回へ持ち越せるうえ、
-日次の本質的な処理は毎回確実に完了する。
+**「バックログ・過去分バックフィル系のタスクは、dbt build/レポート/Slack通知
+より後に置く」という設計原則**（2026-09-14〜15、実機障害を踏まえて確立）。
+Mac Miniの Tapoスケジュール電源は固定2時間枠でシステムの`shutdown`より先に
+物理的に電源を落とすため、`finance-lake-shutdown.service`の「実行中のジョブを
+待ってからシャットダウン」という設計は機能しない（そもそも起動されない）。
+処理量が不定・大きくなりうるタスク(バックログ・バックフィル)をdbt build等より
+前に置くと、それが長引いた回はdbt build/レポート/Slack通知が一度も実行されずに
+電源が落ちる。実際に2日連続でこの障害が実機発生した:
+  - 2026-09-13: JPX形式B(過去分バックフィル)が長引き、Slack通知が飛ばず。
+    → 形式Bを最後に回して解消(2026-09-14)。
+  - 2026-09-14夜間: レイク層のPDFバックフィル直後でJPX形式Cのバックログが
+    数百日分に膨れ上がり(1日あたりPDF解析に約2分半)、同じ理由でSlack通知が
+    飛ばず。→ JPX形式Cを「直近LANDING_LOOKBACK_DAYS日(保証枠、サイズ小・
+    dbt buildより前)」と「それより前のバックログ(サイズ不定・dbt build等より
+    後)」の2タスクに分割して解消(2026-09-15、詳細はload_jpx_stq.py参照)。
+どちらの場合も、電源枠が尽きて処理が中断されてもlandingのアトミック書き込みに
+より安全に次回実行へ持ち越せる。日次の本質的な処理(EDINET・JPX形式Cの直近分・
+dbt build・レポート・Slack通知)は毎回確実に完了する。
 """
 
 from __future__ import annotations
@@ -36,7 +43,7 @@ from prefect import flow, get_run_logger, task
 
 from flows.load_edinet import load_edinet_csv_facts
 from flows.load_jpx_monthly_ohlc import load_jpx_monthly_ohlc_facts
-from flows.load_jpx_stq import load_jpx_stq_prices
+from flows.load_jpx_stq import load_jpx_stq_prices_backlog, load_jpx_stq_prices_recent
 from flows.notify import send_slack_notification, upload_report_to_s3
 from report.run_report import DbtOutcome, generate_report
 
@@ -183,17 +190,23 @@ def daily_transform() -> str:
     loaded = load_edinet_csv_facts()
     logger.info(f"landing 取り込み(EDINET): {loaded['dates']} 日 / {loaded['rows']} 行")
 
-    jpx_loaded = load_jpx_stq_prices()
-    logger.info(f"landing 取り込み(JPX形式C): {jpx_loaded['dates']} 日 / {jpx_loaded['rows']} 銘柄")
+    jpx_loaded = load_jpx_stq_prices_recent()
+    logger.info(f"landing 取り込み(JPX形式C・直近分): {jpx_loaded['dates']} 日 / {jpx_loaded['rows']} 銘柄")
 
     result = dbt_build()
 
     html, summary = build_report(result)
     summary = publish_and_notify(html, summary)
 
-    # JPX形式B(過去分バックフィル)は日次の本質的な処理より後に回す(理由は
+    # バックログ・過去分バックフィル系は日次の本質的な処理より後に回す(理由は
     # モジュールdocstring参照)。ここで電源枠が尽きて中断されても、landingは
-    # 月単位アトミック書き込みのため安全に次回実行へ持ち越される。
+    # アトミック書き込みのため安全に次回実行へ持ち越される。
+    jpx_backlog_loaded = load_jpx_stq_prices_backlog()
+    logger.info(
+        f"landing 取り込み(JPX形式C・バックログ): {jpx_backlog_loaded['dates']} 日 / "
+        f"{jpx_backlog_loaded['rows']} 銘柄"
+    )
+
     jpx_monthly_loaded = load_jpx_monthly_ohlc_facts()
     logger.info(
         f"landing 取り込み(JPX形式B): {jpx_monthly_loaded['months']} ヶ月 / "

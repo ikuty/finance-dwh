@@ -15,12 +15,25 @@
 取り込み対象日 = 直近 LANDING_LOOKBACK_DAYS 日 ∪ (レイクに日付ディレクトリが
 あるが landing.jpx_stq_facts にまだ無い日)。
 
+このうち「直近 LANDING_LOOKBACK_DAYS 日」を**保証枠**、それより前の未取り込み日を
+**バックログ**として明確に分離している（2026-09-15決定）。理由: レイク層で
+過去日付ぶんのPDFを大量にバックフィルした直後、バックログが数百日分に膨れ上がり
+（1日あたりPDF解析に約2分半かかるため）、dbt build/レポート/Slack通知に
+一度も到達できないままMac Miniの電源枠(2時間)が尽きる障害が実機で2日連続発生した
+（docs/deployment_design.md参照）。バックログの量はレイク側の事情次第で不定・
+大きくなりうる一方、直近数日分の保証枠は必ず小さく完了する。両者を1つの
+タスクにまとめていると、後者の存在が前者の量に引きずられてしまうため、
+`load_jpx_stq_prices_recent`(保証枠、dbt buildより前)と
+`load_jpx_stq_prices_backlog`(バックログ、dbt build/レポート/Slack通知より後)の
+2タスクに分割した(`daily_transform.py`参照)。
+
 レイク上のパス: {LAKE_ROOT}/jpx-daily-pdf-dl/raw/detailed-daily/{yyyy}/{mm}/{dd}/stq.pdf
 """
 
 from __future__ import annotations
 
 import datetime
+import logging
 import os
 from pathlib import Path
 
@@ -73,9 +86,27 @@ def recent_dates(today: datetime.date, days: int) -> set[str]:
 
 
 def dates_to_load(lake_root: Path, landing_root: Path, today: datetime.date, lookback: int) -> list[str]:
+    """保証枠・バックログを合わせた全対象日(参考・テスト用)。実際のフローは
+    recent_dates_to_load / backlog_dates_to_load を別タスクとして使う。"""
     on_disk = disk_dates(lake_root)
     done = landing_logged_dates(landing_root)
     return sorted((on_disk - done) | (on_disk & recent_dates(today, lookback)))
+
+
+def recent_dates_to_load(lake_root: Path, landing_root: Path, today: datetime.date, lookback: int) -> list[str]:
+    """保証枠: 直近lookback日のうち、レイクにはあるがlandingにまだ無い日。
+    サイズは常にlookback+1日以下で、dbt buildより前に必ず完了させたい。"""
+    on_disk = disk_dates(lake_root)
+    done = landing_logged_dates(landing_root)
+    return sorted((on_disk - done) & recent_dates(today, lookback))
+
+
+def backlog_dates_to_load(lake_root: Path, landing_root: Path, today: datetime.date, lookback: int) -> list[str]:
+    """バックログ: 直近lookback日より前で、レイクにはあるがlandingにまだ無い日。
+    件数は不定・大きくなりうるため、dbt build/レポート/Slack通知より後に処理する。"""
+    on_disk = disk_dates(lake_root)
+    done = landing_logged_dates(landing_root)
+    return sorted((on_disk - done) - recent_dates(today, lookback))
 
 
 def _atomic_write_parquet(tbl: pa.Table, out_dir: Path) -> None:
@@ -128,19 +159,43 @@ def load_one(lake_root: Path, landing_root: Path, date: str) -> int:
     return len(records)
 
 
-@task
-def load_jpx_stq_prices() -> dict[str, int]:
-    """landing/jpx_stq_words, landing/jpx_stq_facts を最新化する。"""
-    logger = get_run_logger()
-    lake_root = Path(LAKE_ROOT)
-    landing_root = Path(LANDING_ROOT)
-    today = datetime.datetime.now(JST).date()
-    dates = dates_to_load(lake_root, landing_root, today, LOOKBACK_DAYS)
-    head = ", ".join(dates[:3]) + (" ..." if len(dates) > 3 else "")
-    logger.info(f"jpx_stq 取り込み対象: {len(dates)} 日 [{head}]")
+_Logger = logging.Logger | logging.LoggerAdapter[logging.Logger]
+
+
+def _load_dates(dates: list[str], lake_root: Path, landing_root: Path, logger: _Logger) -> dict[str, int]:
     total = 0
     for date in dates:
         rows = load_one(lake_root, landing_root, date)
         total += rows
         logger.info(f"  {date}: {rows} 銘柄")
     return {"dates": len(dates), "rows": total}
+
+
+@task
+def load_jpx_stq_prices_recent() -> dict[str, int]:
+    """landing/jpx_stq_words, landing/jpx_stq_facts のうち、直近LOOKBACK_DAYS日分
+    (保証枠)を最新化する。サイズが小さく抑えられているため、dbt buildより前に
+    必ず実行する(daily_transform.py参照)。"""
+    logger = get_run_logger()
+    lake_root = Path(LAKE_ROOT)
+    landing_root = Path(LANDING_ROOT)
+    today = datetime.datetime.now(JST).date()
+    dates = recent_dates_to_load(lake_root, landing_root, today, LOOKBACK_DAYS)
+    head = ", ".join(dates[:3]) + (" ..." if len(dates) > 3 else "")
+    logger.info(f"jpx_stq 取り込み対象(直近{LOOKBACK_DAYS}日): {len(dates)} 日 [{head}]")
+    return _load_dates(dates, lake_root, landing_root, logger)
+
+
+@task
+def load_jpx_stq_prices_backlog() -> dict[str, int]:
+    """landing/jpx_stq_words, landing/jpx_stq_facts のうち、直近LOOKBACK_DAYS日より
+    前のバックログを最新化する。件数が不定・大きくなりうるため、dbt build/
+    レポート/Slack通知より後に実行する(daily_transform.py参照)。"""
+    logger = get_run_logger()
+    lake_root = Path(LAKE_ROOT)
+    landing_root = Path(LANDING_ROOT)
+    today = datetime.datetime.now(JST).date()
+    dates = backlog_dates_to_load(lake_root, landing_root, today, LOOKBACK_DAYS)
+    head = ", ".join(dates[:3]) + (" ..." if len(dates) > 3 else "")
+    logger.info(f"jpx_stq 取り込み対象(バックログ): {len(dates)} 日 [{head}]")
+    return _load_dates(dates, lake_root, landing_root, logger)
