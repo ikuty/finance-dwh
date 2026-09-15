@@ -23,11 +23,23 @@ DuckDB 自身の CSV パーサーは EDINET の長大なテキストブロック
 まだ無い日）。前者は edinet-dl の DAYS_WINDOW による遡及取得、後者は過去バックフィルを拾う。
 「日付ディレクトリの有無」だけを見る（landing 側は part.parquet の存在＝取り込み済みの
 印なので、0 行の日でも一度書けば翌日以降は再走査されない）。
+
+このうち「直近 LOOKBACK_DAYS 日」を**保証枠**、それより前の未取り込み日を**バックログ**
+として分離している（2026-09-15決定、load_jpx_stq.pyと同じ設計）。理由: レイク層で
+edinet-dlの過去分（2022年、365日）を一括バックフィルした直後、DWH側のバックログが
+大量に積み上がる状況が発生した。バックログの量はレイク側の事情次第で不定・大きく
+なりうる一方、直近数日分の保証枠は必ず小さく完了する。両者を1つのタスクにまとめて
+いると、後者の存在が前者の量に引きずられ、dbt build/レポート/Slack通知に一度も
+到達できないまま電源枠が尽きる（2026-09-13のJPX形式B、2026-09-14夜間のJPX形式Cで
+実際に発生した障害と同種）。`load_edinet_csv_facts_recent`(保証枠、dbt buildより前)と
+`load_edinet_csv_facts_backlog`(バックログ、dbt build/レポート/Slack通知より後)の
+2タスクに分割した(daily_transform.py参照)。
 """
 
 from __future__ import annotations
 
 import datetime
+import logging
 import os
 import sys
 from pathlib import Path
@@ -96,9 +108,27 @@ def recent_dates(today: datetime.date, days: int) -> set[str]:
 
 
 def dates_to_load(lake_root: Path, landing_root: Path, today: datetime.date, lookback: int) -> list[str]:
+    """保証枠・バックログを合わせた全対象日(参考・テスト用)。実際のフローは
+    recent_dates_to_load / backlog_dates_to_load を別タスクとして使う。"""
     on_disk = disk_dates(lake_root)
     done = landing_logged_dates(landing_root)
     return sorted((on_disk - done) | (on_disk & recent_dates(today, lookback)))
+
+
+def recent_dates_to_load(lake_root: Path, landing_root: Path, today: datetime.date, lookback: int) -> list[str]:
+    """保証枠: 直近lookback日のうち、レイクにはあるがlandingにまだ無い日。
+    サイズは常にlookback+1日以下で、dbt buildより前に必ず完了させたい。"""
+    on_disk = disk_dates(lake_root)
+    done = landing_logged_dates(landing_root)
+    return sorted((on_disk - done) & recent_dates(today, lookback))
+
+
+def backlog_dates_to_load(lake_root: Path, landing_root: Path, today: datetime.date, lookback: int) -> list[str]:
+    """バックログ: 直近lookback日より前で、レイクにはあるがlandingにまだ無い日。
+    件数は不定・大きくなりうるため、dbt build/レポート/Slack通知より後に処理する。"""
+    on_disk = disk_dates(lake_root)
+    done = landing_logged_dates(landing_root)
+    return sorted((on_disk - done) - recent_dates(today, lookback))
 
 
 def load_one(lake_root: Path, landing_root: Path, date: str) -> int:
@@ -128,19 +158,43 @@ def load_one(lake_root: Path, landing_root: Path, date: str) -> int:
     return len(collector.columns[0])
 
 
-@task
-def load_edinet_csv_facts() -> dict[str, int]:
-    """landing/edinet_csv_facts を最新化する。"""
-    logger = get_run_logger()
-    lake_root = Path(LAKE_ROOT)
-    landing_root = Path(LANDING_ROOT)
-    today = datetime.datetime.now(JST).date()
-    dates = dates_to_load(lake_root, landing_root, today, LOOKBACK_DAYS)
-    head = ", ".join(dates[:3]) + (" ..." if len(dates) > 3 else "")
-    logger.info(f"landing 取り込み対象: {len(dates)} 日 [{head}]")
+_Logger = logging.Logger | logging.LoggerAdapter[logging.Logger]
+
+
+def _load_dates(dates: list[str], lake_root: Path, landing_root: Path, logger: _Logger) -> dict[str, int]:
     total = 0
     for date in dates:
         rows = load_one(lake_root, landing_root, date)
         total += rows
         logger.info(f"  {date}: {rows} 行")
     return {"dates": len(dates), "rows": total}
+
+
+@task
+def load_edinet_csv_facts_recent() -> dict[str, int]:
+    """landing/edinet_csv_facts のうち、直近LOOKBACK_DAYS日分(保証枠)を最新化する。
+    サイズが小さく抑えられているため、dbt buildより前に必ず実行する
+    (daily_transform.py参照)。"""
+    logger = get_run_logger()
+    lake_root = Path(LAKE_ROOT)
+    landing_root = Path(LANDING_ROOT)
+    today = datetime.datetime.now(JST).date()
+    dates = recent_dates_to_load(lake_root, landing_root, today, LOOKBACK_DAYS)
+    head = ", ".join(dates[:3]) + (" ..." if len(dates) > 3 else "")
+    logger.info(f"landing 取り込み対象(直近{LOOKBACK_DAYS}日): {len(dates)} 日 [{head}]")
+    return _load_dates(dates, lake_root, landing_root, logger)
+
+
+@task
+def load_edinet_csv_facts_backlog() -> dict[str, int]:
+    """landing/edinet_csv_facts のうち、直近LOOKBACK_DAYS日より前のバックログを
+    最新化する。件数が不定・大きくなりうるため、dbt build/レポート/Slack通知より
+    後に実行する(daily_transform.py参照)。"""
+    logger = get_run_logger()
+    lake_root = Path(LAKE_ROOT)
+    landing_root = Path(LANDING_ROOT)
+    today = datetime.datetime.now(JST).date()
+    dates = backlog_dates_to_load(lake_root, landing_root, today, LOOKBACK_DAYS)
+    head = ", ".join(dates[:3]) + (" ..." if len(dates) > 3 else "")
+    logger.info(f"landing 取り込み対象(バックログ): {len(dates)} 日 [{head}]")
+    return _load_dates(dates, lake_root, landing_root, logger)

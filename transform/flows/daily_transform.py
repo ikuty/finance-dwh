@@ -24,6 +24,12 @@ Mac Miniの Tapoスケジュール電源は固定2時間枠でシステムの`sh
     飛ばず。→ JPX形式Cを「直近LANDING_LOOKBACK_DAYS日(保証枠、サイズ小・
     dbt buildより前)」と「それより前のバックログ(サイズ不定・dbt build等より
     後)」の2タスクに分割して解消(2026-09-15、詳細はload_jpx_stq.py参照)。
+  - 2026-09-15: 同じ理由でedinet-dlも先回りして分割。レイク層で2022年分
+    （365日）を一括バックフィルした直後で、DWH側は2022年分を1日も取り込んで
+    いなかったため、対策前のまま翌日実行すればJPX形式Cと同型の障害が起きる
+    ことが判明した。EDINETもload_edinet_csv_facts_recent(保証枠)と
+    load_edinet_csv_facts_backlog(バックログ)の2タスクに分割した
+    (詳細はload_edinet.py参照)。
 どちらの場合も、電源枠が尽きて処理が中断されてもlandingのアトミック書き込みに
 より安全に次回実行へ持ち越せる。日次の本質的な処理(EDINET・JPX形式Cの直近分・
 dbt build・レポート・Slack通知)は毎回確実に完了する。
@@ -41,7 +47,7 @@ from pathlib import Path
 
 from prefect import flow, get_run_logger, task
 
-from flows.load_edinet import load_edinet_csv_facts
+from flows.load_edinet import load_edinet_csv_facts_backlog, load_edinet_csv_facts_recent
 from flows.load_jpx_monthly_ohlc import load_jpx_monthly_ohlc_facts
 from flows.load_jpx_stq import load_jpx_stq_prices_backlog, load_jpx_stq_prices_recent
 from flows.notify import send_slack_notification, upload_report_to_s3
@@ -187,8 +193,8 @@ def daily_transform() -> str:
     logger = get_run_logger()
     ensure_data_dirs()
 
-    loaded = load_edinet_csv_facts()
-    logger.info(f"landing 取り込み(EDINET): {loaded['dates']} 日 / {loaded['rows']} 行")
+    loaded = load_edinet_csv_facts_recent()
+    logger.info(f"landing 取り込み(EDINET・直近分): {loaded['dates']} 日 / {loaded['rows']} 行")
 
     jpx_loaded = load_jpx_stq_prices_recent()
     logger.info(f"landing 取り込み(JPX形式C・直近分): {jpx_loaded['dates']} 日 / {jpx_loaded['rows']} 銘柄")
@@ -201,6 +207,12 @@ def daily_transform() -> str:
     # バックログ・過去分バックフィル系は日次の本質的な処理より後に回す(理由は
     # モジュールdocstring参照)。ここで電源枠が尽きて中断されても、landingは
     # アトミック書き込みのため安全に次回実行へ持ち越される。
+    edinet_backlog_loaded = load_edinet_csv_facts_backlog()
+    logger.info(
+        f"landing 取り込み(EDINET・バックログ): {edinet_backlog_loaded['dates']} 日 / "
+        f"{edinet_backlog_loaded['rows']} 行"
+    )
+
     jpx_backlog_loaded = load_jpx_stq_prices_backlog()
     logger.info(
         f"landing 取り込み(JPX形式C・バックログ): {jpx_backlog_loaded['dates']} 日 / "

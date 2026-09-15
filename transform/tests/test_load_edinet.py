@@ -122,6 +122,58 @@ def test_dates_to_load_unions_backfill_and_lookback(tmp_path: Path) -> None:
     assert got == ["2026-09-07", "2026-09-08", "2026-09-10"]
 
 
+def test_recent_dates_to_load_excludes_backlog(tmp_path: Path) -> None:
+    lake = tmp_path / "lake"
+    landing = tmp_path / "landing"
+    for d in ("2024-01-05", "2026-09-07", "2026-09-08", "2026-09-10"):
+        make_day_dir(lake, d)
+    for d in ("2024-01-05", "2026-09-07"):
+        done_dir = landing / "edinet_csv_facts" / f"file_date={d}"
+        done_dir.mkdir(parents=True)
+        (done_dir / "part.parquet").write_bytes(b"x")
+
+    got = m.recent_dates_to_load(lake, landing, datetime.date(2026, 9, 10), lookback=3)
+
+    # 2024-01-05はlookback窓の外(バックログ)なので含まない
+    assert got == ["2026-09-08", "2026-09-10"]
+
+
+def test_backlog_dates_to_load_excludes_recent_window(tmp_path: Path) -> None:
+    lake = tmp_path / "lake"
+    landing = tmp_path / "landing"
+    for d in ("2024-01-05", "2026-09-07", "2026-09-08", "2026-09-10"):
+        make_day_dir(lake, d)
+    for d in ("2026-09-07",):
+        done_dir = landing / "edinet_csv_facts" / f"file_date={d}"
+        done_dir.mkdir(parents=True)
+        (done_dir / "part.parquet").write_bytes(b"x")
+
+    got = m.backlog_dates_to_load(lake, landing, datetime.date(2026, 9, 10), lookback=3)
+
+    # 2026-09-08/10はlookback窓の内側(保証枠)なので含まない
+    assert got == ["2024-01-05"]
+
+
+def test_recent_and_backlog_dates_to_load_partition_dates_to_load(tmp_path: Path) -> None:
+    # 2つに分割しても、合わせればdates_to_load全体(過不足・重複なし)と一致する
+    lake = tmp_path / "lake"
+    landing = tmp_path / "landing"
+    for d in ("2024-01-05", "2026-09-07", "2026-09-08", "2026-09-10"):
+        make_day_dir(lake, d)
+    for d in ("2024-01-05",):
+        done_dir = landing / "edinet_csv_facts" / f"file_date={d}"
+        done_dir.mkdir(parents=True)
+        (done_dir / "part.parquet").write_bytes(b"x")
+
+    today = datetime.date(2026, 9, 10)
+    whole = m.dates_to_load(lake, landing, today, lookback=3)
+    recent = m.recent_dates_to_load(lake, landing, today, lookback=3)
+    backlog = m.backlog_dates_to_load(lake, landing, today, lookback=3)
+
+    assert sorted(recent + backlog) == whole
+    assert set(recent).isdisjoint(backlog)
+
+
 # --- load_one（実 DuckDB） ----------------------------------------------------
 
 
