@@ -9,6 +9,14 @@ finance_dwh:
       type: duckdb
       path: "{{ env_var('DUCKDB_PATH', '/data/finance_dwh.duckdb') }}"
       threads: 4
+      # DuckDBの既定memory_limitは物理メモリの約80%で、Mac Mini実機(7.7GB)では
+      # 約6.1GBに相当する。実機でdbt build中にコンテナが6.49GiB(84.7%)まで
+      # 膨らみ、システム全体の空きメモリが189MiBまで逼迫・スワップも発生する
+      # (2026-09-13のJPX形式Bメモリ逼迫障害と同種の前兆)のを実測したため、
+      # OS・Docker・Prefect等の他プロセス分の余白を残して3GBに明示的に制限する
+      # (2026-09-15)。
+      settings:
+        memory_limit: "3GB"
     ci:
       type: duckdb
       path: ":memory:"
