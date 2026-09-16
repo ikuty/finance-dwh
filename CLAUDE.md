@@ -8,6 +8,27 @@ Prefect + docker compose** で構築する。全体像は `docs/architecture.md`
 **2026-09-11: PostgreSQL + file_fdw から DuckDB + Parquet へ全面移行した**（下記参照）。
 旧 Postgres 実装は git 履歴（`afc45c7`〜`5ea9b52`）に残る。
 
+## ブランチ戦略（2026-09-16決定）
+
+git-flowの修正版。従来の「mainへ直接コミット」は廃止した。
+
+- `main`: リリース対象のみ。
+- `dev`: `main`から派生。日常の開発はここに積む。
+- `feature/*`: `dev`から派生。新規開発・機能改修用。PRのbaseは`dev`。
+- リリース時: `dev`→`release`→`main`の順にmergeしてデプロイする。
+
+マージ方式（GitHubにはマージ先ブランチごとの強制設定は無いため、運用上の約束事として
+手動で選択する。squash・merge commitとも両リポジトリでリポジトリ設定上は有効化済み）:
+
+| 遷移 | マージ方式 |
+|---|---|
+| `feature/*` → `dev` | squash merge |
+| `dev` → `release` | merge commit |
+| `release` → `main` | merge commit |
+
+GitHub上のdefault branchは`main`のまま変更していない。PRのbaseは都度明示的に`dev`を
+指定すること（省略すると`main`向けになってしまう）。
+
 ## 固有の設計判断
 
 - **DuckDB は組み込み型（サーバなし）**。永続化される実体はホスト上の **Parquet
