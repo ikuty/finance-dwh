@@ -3,9 +3,11 @@
 Prefect の ephemeral モードで単発実行する（常駐サーバ・ワーカーは持たない）:
     python -m flows.daily_transform
 
-流れ: landing 取り込み(EDINET/JPX形式C・直近分のみ) → dbt build → 実行レポート
-生成 → S3 アップロード → Slack 通知 → landing 取り込み(JPX形式C・バックログ、
-JPX形式B・過去分バックフィル)。DuckDB は組み込み型（サーバなし）のため、
+流れ: landing 取り込み(EDINET/JPX形式C・直近分のみ、mufg-corporate-actions) →
+dbt build → 実行レポート生成 → S3 アップロード → Slack 通知 → landing 取り込み
+(JPX形式C・バックログ、JPX形式B・過去分バックフィル)。mufg-corporate-actionsは
+週次・軽量なためrecent/backlog分割対象外で常にdbt buildより前に置く。
+DuckDB は組み込み型（サーバなし）のため、
 Postgres 版にあった起動待ちは無い。dbt が失敗してもレポート生成・S3・Slack
 までは実行し、最後に非ゼロ終了する。
 
@@ -50,6 +52,7 @@ from prefect import flow, get_run_logger, task
 from flows.load_edinet import load_edinet_csv_facts_backlog, load_edinet_csv_facts_recent
 from flows.load_jpx_monthly_ohlc import load_jpx_monthly_ohlc_facts
 from flows.load_jpx_stq import load_jpx_stq_prices_backlog, load_jpx_stq_prices_recent
+from flows.load_mufg_corporate_actions import load_mufg_corporate_actions
 from flows.notify import send_slack_notification, upload_report_to_s3
 from report.run_report import DbtOutcome, generate_report
 
@@ -198,6 +201,16 @@ def daily_transform() -> str:
 
     jpx_loaded = load_jpx_stq_prices_recent()
     logger.info(f"landing 取り込み(JPX形式C・直近分): {jpx_loaded['dates']} 日 / {jpx_loaded['rows']} 銘柄")
+
+    # mufg-corporate-actionsは週次・3ファイルのみで処理量が常に小さいため、
+    # recent/backlog分割は不要（load_mufg_corporate_actions.py参照）。
+    mufg_loaded = load_mufg_corporate_actions()
+    logger.info(
+        f"landing 取り込み(mufg-corporate-actions): {mufg_loaded['dates']} 日 / "
+        f"分割{mufg_loaded.get('mufg_stock_splits', 0)}件 / "
+        f"併合{mufg_loaded.get('mufg_stock_consolidations', 0)}件 / "
+        f"商号変更{mufg_loaded.get('mufg_company_name_changes', 0)}件"
+    )
 
     result = dbt_build()
 
