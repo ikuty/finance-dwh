@@ -5,3 +5,7 @@ boto3~=1.43
 duckdb~=1.5
 pyarrow~=25.0
 pdfplumber~=0.11
+# mufg_corporate_actions.py のHTMLテーブル解析用。標準ライブラリのみでの実装は
+# 現実的でないため、boto3・pdfplumberに続く例外的な追加(2026-09-16)。
+# lxml等のC拡張は増やさず、標準ライブラリのhtml.parserバックエンドのみで使う。
+beautifulsoup4~=4.13
