@@ -8,6 +8,27 @@ Prefect + docker compose** で構築する。全体像は `docs/architecture.md`
 **2026-09-11: PostgreSQL + file_fdw から DuckDB + Parquet へ全面移行した**（下記参照）。
 旧 Postgres 実装は git 履歴（`afc45c7`〜`5ea9b52`）に残る。
 
+## ブランチ戦略（2026-09-16決定）
+
+git-flowの修正版。従来の「mainへ直接コミット」は廃止した。
+
+- `main`: リリース対象のみ。
+- `dev`: `main`から派生。日常の開発はここに積む。
+- `feature/*`: `dev`から派生。新規開発・機能改修用。PRのbaseは`dev`。
+- リリース時: `dev`→`release`→`main`の順にmergeしてデプロイする。
+
+マージ方式（GitHubにはマージ先ブランチごとの強制設定は無いため、運用上の約束事として
+手動で選択する。squash・merge commitとも両リポジトリでリポジトリ設定上は有効化済み）:
+
+| 遷移 | マージ方式 |
+|---|---|
+| `feature/*` → `dev` | squash merge |
+| `dev` → `release` | merge commit |
+| `release` → `main` | merge commit |
+
+GitHub上のdefault branchは`main`のまま変更していない。PRのbaseは都度明示的に`dev`を
+指定すること（省略すると`main`向けになってしまう）。
+
 ## 固有の設計判断
 
 - **DuckDB は組み込み型（サーバなし）**。永続化される実体はホスト上の **Parquet
@@ -89,6 +110,25 @@ Prefect + docker compose** で構築する。全体像は `docs/architecture.md`
   遡及窓は不要）。4世代サンプル（2020-01/2022-12/2023-01/2025-09）で
   OHLC違反0件を確認済み。詳細は `docs/raw_landing_design.md`「JPX 形式B」
   参照。
+- **mufg-corporate-actions（株式分割・株式併合・商号変更、2026-09-16追加）**:
+  レイク層は週次（月曜）で3ページの生HTMLをそのまま保存するのみ。DWH側で
+  `transform/fdw/mufg_corporate_actions.py`（BeautifulSoup、`html.parser`
+  バックエンド）がパースし、`load_mufg_corporate_actions.py`が
+  `landing.mufg_stock_splits` / `mufg_stock_consolidations` /
+  `mufg_company_name_changes`へ書く。3ページとも**列構成が異なる**
+  （分割7列・併合5列・商号変更4列）ため独立したdataclass・パース関数を持つ。
+  **各ページはその時点での全履歴＋今後の予定を毎回まるごと再掲載する形式**
+  （実機確認: 3ページとも2002年8月まで遡る）のため、EDINET/JPXのような
+  「日付ごとに独立したファイル」ではなく「バックフィル」という概念が存在
+  しない。landingは週ごとに`file_date=YYYY-MM-DD`で蓄積する（監査証跡）が、
+  **cleansedはlandingの最新file_dateのみを読む**（古い週のスナップショットは
+  新しい週に完全に包含されるため）。比率列（"1：2"、"10株→1株"）はcleansedで
+  `ratio_before`/`ratio_after`のdecimal 2列に分割する（実データで書式が完全に
+  一貫していることを確認済み）。個人利用限定
+  （`services/mufg-corporate-actions/CLAUDE.md`参照、kabu.com利用規約により
+  商用利用・第三者への再配信は不可）。処理量が常に小さい（週次・3ファイルの
+  み）ため、JPX-C/EDINETのようなrecent/backlog分割は不要で常に`dbt_build`
+  より前に置く。
 - **Prefect は ephemeral 実行**（常駐サーバ・ワーカーなし）。フロー `daily_transform` を
   `python -m flows.daily_transform` で単発実行。UI が要るようになったら通電枠限定の
   `prefect-server` compose サービスを後付け。
@@ -105,9 +145,12 @@ Prefect + docker compose** で構築する。全体像は `docs/architecture.md`
 
 Python 3.12。外部依存は `transform/` のみ: `dbt-core` / `dbt-duckdb` / `duckdb` /
 `pyarrow` / `prefect` / `boto3` / `pdfplumber`（JPX PDF のテキスト化、`py.typed`
-同梱のため追加 stub 不要）。開発は `requirements-dev.txt`（+ `mypy` / `pytest` /
-`boto3-stubs` / `pyarrow-stubs`）。`mypy --strict` + `pytest`。CSV 抽出ロジック
-（`transform/fdw/edinet_csv_fdw.py`）は標準ライブラリのみ。
+同梱のため追加 stub 不要）/ `beautifulsoup4`（mufg-corporate-actionsのHTMLテーブル
+解析、2026-09-16追加。標準ライブラリのみでの実装は現実的でないための例外。
+lxml等のC拡張依存は増やさず`html.parser`バックエンドのみ使用）。開発は
+`requirements-dev.txt`（+ `mypy` / `pytest` / `boto3-stubs` / `pyarrow-stubs`）。
+`mypy --strict` + `pytest`。CSV 抽出ロジック（`transform/fdw/edinet_csv_fdw.py`）は
+標準ライブラリのみ。
 
 ## Mac Mini 上のパス
 
@@ -122,7 +165,8 @@ Python 3.12。外部依存は `transform/` のみ: `dbt-core` / `dbt-duckdb` / `
 
 ## 実行順序（通電枠 04:00-06:00 JST）
 
-jpx 04:01:00 → edinet 04:01:30 → **transform 04:01:45** → shutdown 04:02:00。
+jpx 04:01:00 → edinet 04:01:30 → mufg-corporate-actions 04:01:40（週次・月曜のみ）
+→ **transform 04:01:45** → shutdown 04:02:00。
 `finance-dwh-transform.service` は `After=` で lake 両ジョブの完了を待ち、共有シャット
 ダウンは `After=` で transform 完了を待つ。`finance-lake/systemd/
 finance-lake-shutdown.service` の `After=` には `finance-dwh-transform.service` が

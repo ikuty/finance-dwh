@@ -29,3 +29,18 @@ sources:
           確定済み過去アーカイブ（2020-01〜、レイク側で一回限りバックフィル済み）。
         meta:
           external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/jpx_monthly_ohlc_facts/*/part.parquet', hive_partitioning=false)"
+      - name: mufg_stock_splits
+        description: >
+          三菱UFJ eスマート証券(kabu.com)の株式分割ページ(全列 text)。
+          file_date=YYYY-MM-DD で週次スナップショットごとに分割。各週、その時点での
+          全履歴を再掲載するため、cleansed側は最新file_dateのみを読む。
+        meta:
+          external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/mufg_stock_splits/*/part.parquet', hive_partitioning=false)"
+      - name: mufg_stock_consolidations
+        description: "三菱UFJ eスマート証券(kabu.com)の株式併合ページ(全列 text)。mufg_stock_splitsと同じ設計。"
+        meta:
+          external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/mufg_stock_consolidations/*/part.parquet', hive_partitioning=false)"
+      - name: mufg_company_name_changes
+        description: "三菱UFJ eスマート証券(kabu.com)の商号変更ページ(全列 text)。mufg_stock_splitsと同じ設計。"
+        meta:
+          external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/mufg_company_name_changes/*/part.parquet', hive_partitioning=false)"
