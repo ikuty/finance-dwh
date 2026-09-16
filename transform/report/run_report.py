@@ -32,6 +32,9 @@ COUNTED_RELATIONS: list[tuple[str, str]] = [
     ("cleansed", "edinet_facts"),
     ("cleansed", "jpx_stq_prices"),
     ("cleansed", "jpx_monthly_ohlc"),
+    ("cleansed", "mufg_stock_splits"),
+    ("cleansed", "mufg_stock_consolidations"),
+    ("cleansed", "mufg_company_name_changes"),
 ]
 
 
