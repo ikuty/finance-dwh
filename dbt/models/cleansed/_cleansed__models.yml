@@ -56,27 +56,73 @@ models:
       rebuild、Parquet、landingの最新file_dateのみ）。個人利用限定
       （services/mufg-corporate-actions/CLAUDE.md参照）。
     columns:
-      - name: code
-        data_tests: [not_null]
       - name: file_date
+        description: "取り込み元のlanding週次スナップショットの日付(常に最新の週)。"
         data_tests: [not_null]
+      - name: allotment_date
+        description: "割当日。未確定の銘柄は元ページで「－」表記のためNULL。"
+      - name: code
+        description: "銘柄コード。"
+        data_tests: [not_null]
+      - name: name
+        description: "銘柄名。"
+      - name: ratio_raw
+        description: '分割比率の原文字列(例 "1：2")。'
+      - name: ratio_before
+        description: "ratio_rawの分割前株数(全角コロンの左側)。"
+      - name: ratio_after
+        description: "ratio_rawの分割後株数(全角コロンの右側)。"
+      - name: last_cum_rights_date
+        description: "権利付最終日。"
+      - name: effective_date
+        description: "効力発生日。未確定の銘柄は元ページで「－」表記のためNULL。"
+      - name: sellable_date
+        description: "売却可能予定日。"
+      - name: _loaded_at
+        description: "DWH取り込み時刻(UTC)。"
 
   - name: cleansed__mufg__stock_consolidations
     description: >
       三菱UFJ eスマート証券(kabu.com)の株式併合ページの型付け版（毎回フル
       rebuild、Parquet、landingの最新file_dateのみ）。個人利用限定。
     columns:
-      - name: code
-        data_tests: [not_null]
       - name: file_date
+        description: "取り込み元のlanding週次スナップショットの日付(常に最新の週)。"
         data_tests: [not_null]
+      - name: effective_date
+        description: "効力発生日。"
+      - name: code
+        description: "銘柄コード。"
+        data_tests: [not_null]
+      - name: name
+        description: "銘柄名。"
+      - name: ratio_raw
+        description: '併合比率の原文字列(例 "10株→1株")。'
+      - name: ratio_before
+        description: "ratio_rawの併合前株数。"
+      - name: ratio_after
+        description: "ratio_rawの併合後株数。"
+      - name: last_cum_rights_date
+        description: "権利付最終日。"
+      - name: _loaded_at
+        description: "DWH取り込み時刻(UTC)。"
 
   - name: cleansed__mufg__company_name_changes
     description: >
       三菱UFJ eスマート証券(kabu.com)の商号変更ページの型付け版（毎回フル
       rebuild、Parquet、landingの最新file_dateのみ）。個人利用限定。
     columns:
-      - name: code
-        data_tests: [not_null]
       - name: file_date
+        description: "取り込み元のlanding週次スナップショットの日付(常に最新の週)。"
         data_tests: [not_null]
+      - name: change_date
+        description: "商号変更日。"
+      - name: code
+        description: "銘柄コード。"
+        data_tests: [not_null]
+      - name: old_name
+        description: "変更前の商号。"
+      - name: new_name
+        description: "変更後の商号。"
+      - name: _loaded_at
+        description: "DWH取り込み時刻(UTC)。"
