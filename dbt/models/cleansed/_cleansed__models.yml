@@ -35,10 +35,33 @@ models:
       - name: file_date
         data_tests: [not_null]
       - name: market_segment
+        description: "市場区分名（日本語、PDF由来の生の表記）。"
         data_tests:
           - accepted_values:
               arguments:
                 values: ["プライム市場", "スタンダード市場", "グロース市場", "TOKYOPROMarket銘柄"]
+      - name: market_segment_code
+        description: >
+          市場区分コード（J-Quants公式MarketCode準拠、seed: jpx_market_segment_code
+          からJOINして解決）。
+      - name: industry_sector_ja
+        description: >
+          東証33業種名（日本語）。ファンド型銘柄（内国投資信託受益証券等）はNULL
+          （security_category_ja参照）。
+      - name: industry_sector_en
+        description: "東証33業種名（英語）。ファンド型銘柄はNULL。"
+      - name: industry_code_33
+        description: >
+          東証33業種コード（seed: jpx_industry_33_17からJOINして解決）。ファンド型
+          銘柄は「その他業種」ではなく明示的にNULL。
+      - name: industry_code_17
+        description: >
+          TOPIX-17業種コード（seed: jpx_industry_33_17からJOINして解決）。ファンド型
+          銘柄はNULL。
+      - name: security_category_ja
+        description: >
+          ファンド型銘柄の証券タイプ区分（内国投資信託受益証券・内国投資証券・
+          外国投資証券・出資証券のいずれか）。普通株式の行ではNULL。
 
   - name: cleansed__jpx__monthly_ohlc
     description: >
