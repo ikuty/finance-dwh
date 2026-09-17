@@ -40,8 +40,13 @@
 ) }}
 
 with new_file_dates as (
-    select distinct cast(file_date as date) as file_date
-    from {{ source('landing', 'edinet_csv_facts') }}
+    -- landingのfile_date一覧は、実データ列を読む(実測: 813ファイルで8.6秒)のではなく
+    -- ディレクトリ名(file_date=YYYY-MM-DD)をglob()で列挙する(実測: 0.13秒、約65倍高速。
+    -- 2026-09-17実機ベンチマークで判明)。ファイル内容を一切開かないため、landingが
+    -- 何日分に増えても実質定数時間で終わる。
+    select distinct
+        regexp_extract(file, 'file_date=([0-9]{4}-[0-9]{2}-[0-9]{2})', 1)::date as file_date
+    from glob('{{ env_var("LANDING_ROOT", "/data/landing") }}/edinet_csv_facts/file_date=*/part.parquet')
     {% if is_incremental() %}
     except
     select distinct file_date from {{ this }}
