@@ -98,6 +98,16 @@ def test_landing_logged_dates_requires_part_parquet(tmp_path: Path) -> None:
     assert m.landing_logged_dates(tmp_path) == {"2026-09-01"}
 
 
+def test_landing_logged_dates_excludes_empty_part_parquet(tmp_path: Path) -> None:
+    """電源断でrenameだけ完了し中身が定着しなかった0バイトファイルは
+    「取り込み済み」と見なさない(2026-09-17実機で発生・確認済み)。"""
+    corrupt_dir = tmp_path / "edinet_csv_facts" / "file_date=2026-04-30"
+    corrupt_dir.mkdir(parents=True)
+    (corrupt_dir / "part.parquet").touch()
+
+    assert m.landing_logged_dates(tmp_path) == set()
+
+
 def test_landing_logged_dates_empty_when_no_landing(tmp_path: Path) -> None:
     assert m.landing_logged_dates(tmp_path) == set()
 

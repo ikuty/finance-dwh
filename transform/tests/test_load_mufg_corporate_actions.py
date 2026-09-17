@@ -75,6 +75,16 @@ def test_landing_logged_dates_requires_splits_part_parquet(tmp_path: Path) -> No
     assert m.landing_logged_dates(tmp_path) == {"2026-09-14"}
 
 
+def test_landing_logged_dates_excludes_empty_part_parquet(tmp_path: Path) -> None:
+    """電源断でrenameだけ完了し中身が定着しなかった0バイトファイルは
+    「取り込み済み」と見なさない(2026-09-17実機で発生・確認済み)。"""
+    corrupt_dir = tmp_path / "mufg_stock_splits" / "file_date=2026-09-14"
+    corrupt_dir.mkdir(parents=True)
+    (corrupt_dir / "part.parquet").touch()
+
+    assert m.landing_logged_dates(tmp_path) == set()
+
+
 def test_dates_to_load_excludes_already_loaded(tmp_path: Path) -> None:
     lake = tmp_path / "lake"
     landing = tmp_path / "landing"
