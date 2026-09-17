@@ -1,0 +1,48 @@
+version: 2
+
+seeds:
+  - name: jpx_industry_33_17
+    description: >
+      東証33業種と TOPIX-17 シリーズ（17業種）の対応表（正本: JPX総研発行
+      「東証指数算出要領（東証業種別株価指数・TOPIX-17シリーズ編）」2025年12月10日版。
+      コード値はJ-Quants API仕様のSector33Code/Sector17Codeに準拠）。ファンド型
+      銘柄（内国投資信託受益証券等）はこの33業種のいずれにも属さないため収録しない
+      （cleansed__jpx__stq_prices側でNULL扱いとする）。
+    config:
+      column_types:
+        industry_code_33: varchar
+        industry_code_17: varchar
+    columns:
+      - name: industry_code_33
+        description: "東証33業種コード（先頭ゼロを含むため文字列、例: '0050'）。"
+        data_tests: [not_null, unique]
+      - name: industry_name_33_ja
+        description: >
+          33業種名（日本語）。cleansed__jpx__stq_prices.industry_sector_jaの実データ
+          表記（全角なかぐろ等）に合わせてある。
+        data_tests: [not_null, unique]
+      - name: industry_code_17
+        description: "TOPIX-17業種コード（文字列、'1'〜'17'）。"
+        data_tests: [not_null]
+      - name: industry_name_17_ja
+        description: "TOPIX-17業種名（日本語）。"
+        data_tests: [not_null]
+
+  - name: jpx_market_segment_code
+    description: >
+      市場区分と市場区分コードの対応表。コードはJ-Quants公式のMarketCode
+      （https://jpx-jquants.com/ja/spec/eq-master/marketcode）に準拠。現行4区分の
+      みを収録し、旧区分（東証一部・東証二部・マザーズ等）は含めない
+      （cleansed__jpx__stq_pricesの実データに一件も出現しないため、2026-09-17実機確認済み）。
+    config:
+      column_types:
+        market_segment_code: varchar
+    columns:
+      - name: market_segment_ja
+        description: >
+          市場区分名（日本語）。cleansed__jpx__stq_prices.market_segmentの実データ
+          表記に合わせてある。
+        data_tests: [not_null, unique]
+      - name: market_segment_code
+        description: "市場区分コード（先頭ゼロを含むため文字列、例: '0111'）。"
+        data_tests: [not_null, unique]
