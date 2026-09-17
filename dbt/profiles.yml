@@ -1,7 +1,10 @@
 # dbt の接続プロファイル。`dbt --profiles-dir dbt ...` で参照する。
-# DuckDB は組み込み（サーバなし）。path はカタログ用の .duckdb ファイル
-# （cleansed 等の実データは external materialization で別途 Parquet に出る。
-# この .duckdb ファイル自体は小さいスキーマ情報のみ）。
+# DuckDB は組み込み（サーバなし）。path はカタログ用の .duckdb ファイル。
+# cleansed の大半は external materialization で別途 Parquet に出るため、この
+# .duckdb ファイルは基本的に小さいスキーマ情報のみだが、cleansed__edinet__facts
+# は2026-09-17よりmaterialized='incremental'（DuckDB内部テーブル）に変更した
+# ため、この1テーブル分の実データ（約1.2GB相当）もここに保持される
+# （post_hookで従来通りParquetへもエクスポートしている、詳細はモデル参照）。
 finance_dwh:
   target: "{{ env_var('DBT_TARGET', 'prod') }}"
   outputs:
