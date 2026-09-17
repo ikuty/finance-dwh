@@ -70,6 +70,13 @@ def disk_dates(lake_root: Path) -> set[str]:
     return out
 
 
+def _is_valid_part(path: Path) -> bool:
+    """part.parquetが存在し、かつ空でないか(電源断でrenameだけ完了し中身が定着
+    しなかった0バイトファイルを「取り込み済み」と誤認しないため。2026-09-17実機で
+    発生・確認済み)。"""
+    return path.exists() and path.stat().st_size > 0
+
+
 def landing_logged_dates(landing_root: Path) -> set[str]:
     """landing/mufg_stock_splits/file_date=*/ が既に存在する日の集合(=取り込み済み)。
     3テーブルは必ず同時に書くため、代表として1テーブルだけ見ればよい。"""
@@ -78,7 +85,7 @@ def landing_logged_dates(landing_root: Path) -> set[str]:
     if not base.is_dir():
         return out
     for d in base.iterdir():
-        if d.is_dir() and d.name.startswith("file_date=") and (d / "part.parquet").exists():
+        if d.is_dir() and d.name.startswith("file_date=") and _is_valid_part(d / "part.parquet"):
             out.add(d.name.removeprefix("file_date="))
     return out
 
@@ -98,7 +105,19 @@ def _atomic_write_parquet(tbl: pa.Table, out_dir: Path) -> None:
         con.execute(f"COPY (SELECT * FROM tbl) TO '{tmp_path.as_posix()}' (FORMAT PARQUET)")
     finally:
         con.close()
+    # renameだけでは電源断時のディスク定着を保証しない。ext4はデフォルトで書き込み
+    # データをページキャッシュに留め置くため、renameの後にTapoの物理電源断が起きると
+    # メタデータ上はファイルが存在するのに中身が定着しておらず0バイトになり得る
+    # (2026-09-17実機で発生・確認済み)。rename前にtmpファイルをfsyncし、rename後は
+    # 親ディレクトリのエントリ更新もfsyncする。
+    with open(tmp_path, "rb") as f:
+        os.fsync(f.fileno())
     tmp_path.replace(final_path)
+    dir_fd = os.open(out_dir, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def load_one_date(lake_root: Path, landing_root: Path, date: str) -> dict[str, int]:
