@@ -17,7 +17,7 @@
 --   置き換わった(金融商品取引法改正)。日付の単純な閾値比較では判定できないケースが
 --   実データで見つかっている(例: 事業年度が2024-04-01より前に開始するのに
 --   四半期報告書が1件も存在しない移行期のケース)。そのため、同一(edinet_code,
---   fiscal_year)内に実際に四半期報告書(q1/q2/q3/quarter)が存在すれば旧制度、
+--   fiscal_year)内に実際に四半期報告書(q1/q2/q3/q4/quarter)が存在すれば旧制度、
 --   半期報告書(half)が存在すれば新制度、どちらも存在しなければ移行期、という
 --   **実データの存在有無から導出する**方式にする(regulatory calendarの推測に
 --   依存しないため頑健)。ファンド型、またはfiscal_yearが特定できない行は
@@ -29,6 +29,13 @@
 --   (撤回書類ではなく、period_start/period_endは正常。実機確認済み)。
 --   正規表現で抽出できない場合はエラーにせず、fiscal_yearはNULL、
 --   四半期のperiod_typeは号数を持たない'quarter'にフォールバックする。
+--
+-- period_type='q4'について:
+--   「四半期報告書は第1・第3四半期のみで第4四半期は無い(年次報告書が代替する)」と
+--   当初想定していたが、実データに「第4四半期」の四半期報告書が6件実在することを
+--   確認した(2026-09-19)。事業年度の期間変更等に伴う変則的な区切りと見られる。
+--   正規表現による抽出ロジック自体は変更不要(自動的にq4として抽出される)だが、
+--   accepted_valuesテストの許容値にq4を追加している。
 
 {{ config(
     materialized='external',
@@ -67,7 +74,7 @@ regime_flags as (
     select
         edinet_code,
         fiscal_year,
-        max(case when period_type in ('q1', 'q2', 'q3', 'quarter') then 1 else 0 end) as has_quarterly,
+        max(case when period_type in ('q1', 'q2', 'q3', 'q4', 'quarter') then 1 else 0 end) as has_quarterly,
         max(case when period_type = 'half' then 1 else 0 end) as has_half
     from base
     where filer_category = 'company' and fiscal_year is not null
