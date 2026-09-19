@@ -30,6 +30,7 @@ CLEANSED_ROOT = os.environ.get("CLEANSED_ROOT", "/data/cleansed")
 COUNTED_RELATIONS: list[tuple[str, str]] = [
     ("cleansed", "edinet_documents"),
     ("cleansed", "edinet_facts"),
+    ("cleansed", "edinet_report_periods"),
     ("cleansed", "jpx_stq_prices"),
     ("cleansed", "jpx_monthly_ohlc"),
     ("cleansed", "mufg_stock_splits"),
