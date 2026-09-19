@@ -55,12 +55,15 @@ models:
           事業年度の期数（doc_descriptionの「第X期」から抽出）。ごく少数、
           doc_descriptionが定型文のみで期数を含まない書類がありNULLになる。
       - name: period_type
-        description: "対象期間の種別。annual(有価証券報告書)/half(半期報告書)/q1・q2・q3(四半期報告書)/quarter(号数が特定できない四半期報告書)。"
+        description: >
+          対象期間の種別。annual(有価証券報告書)/half(半期報告書)/q1・q2・q3・q4
+          (四半期報告書、q4は稀だが実在する。事業年度の期間変更等に伴う変則的な
+          四半期区分と見られる)/quarter(号数が特定できない四半期報告書)。
         data_tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ["annual", "half", "q1", "q2", "q3", "quarter"]
+                values: ["annual", "half", "q1", "q2", "q3", "q4", "quarter"]
       - name: period_start
         description: "対象期間の開始日。"
         data_tests: [not_null]
