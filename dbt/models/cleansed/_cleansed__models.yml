@@ -25,6 +25,61 @@ models:
               arguments:
                 values: ["consolidated", "non_consolidated", "other"]
 
+  - name: cleansed__edinet__report_periods
+    description: >
+      EDINET提出書類のうち「期」の概念を持つ定期開示（有価証券報告書・四半期報告書・
+      半期報告書）を、銘柄×期の単位に正規化した期間ディメンション（毎回フル rebuild、
+      Parquet）。粒度はcleansed__edinet__documentsと同じ（1行=1書類）。
+    columns:
+      - name: doc_id
+        description: "書類管理番号（cleansed__edinet__facts.doc_idと結合するキー）。"
+        data_tests: [not_null, unique]
+      - name: edinet_code
+        description: "EDINETコード。"
+        data_tests: [not_null]
+      - name: sec_code
+        description: "銘柄コード。"
+      - name: filer_name
+        description: "提出者名。"
+      - name: filer_category
+        description: >
+          提出者区分。事業会社は'company'、投資信託受益証券等のファンド型は'fund'
+          （ordinance_code='030'により判定）。
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["company", "fund"]
+      - name: fiscal_year
+        description: >
+          事業年度の期数（doc_descriptionの「第X期」から抽出）。ごく少数、
+          doc_descriptionが定型文のみで期数を含まない書類がありNULLになる。
+      - name: period_type
+        description: "対象期間の種別。annual(有価証券報告書)/half(半期報告書)/q1・q2・q3(四半期報告書)/quarter(号数が特定できない四半期報告書)。"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["annual", "half", "q1", "q2", "q3", "quarter"]
+      - name: period_start
+        description: "対象期間の開始日。"
+        data_tests: [not_null]
+      - name: period_end
+        description: "対象期間の終了日。"
+        data_tests: [not_null]
+      - name: regime
+        description: >
+          事業会社の開示制度区分。旧制度(四半期報告書あり)/移行期(四半期・半期
+          報告書とも無し)/新制度(半期報告書あり)を、同一(edinet_code, fiscal_year)
+          内の実際の書類種別の存在有無から判定する。filer_category='fund'または
+          fiscal_yearがNULLの行は常にNULL。
+      - name: submit_date_time
+        description: "提出日時。"
+      - name: doc_type_code
+        description: "書類種別コード（生の値、参考）。"
+      - name: form_code
+        description: "様式コード（生の値、参考）。"
+
   - name: cleansed__jpx__stq_prices
     description: >
       JPX 形式C（株式相場表・詳細日次）セクション1（立会市場普通取引）の
