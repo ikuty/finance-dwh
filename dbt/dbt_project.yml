@@ -18,6 +18,8 @@ models:
       +schema: raw
     cleansed:
       +schema: cleansed
+    mart:
+      +schema: mart
 
 # raw    : レイクを DuckDB で直接読む view モデル（models/raw/）。
 #          edinet_csv_facts だけは CSV パースが重い/DuckDB の CSV リーダーが
@@ -28,4 +30,7 @@ models:
 #          （models/cleansed/_cleansed__sources.yml）。
 # cleansed: landing / raw から型付け・名寄せする dbt モデル。external
 #          materialization で Parquet に書く（{CLEANSED_ROOT}/*.parquet）。
-# mart   : 利用用途が固まってから。
+# mart   : 具体的な利用目的を持つ集計モデル（models/mart/）。external
+#          materialization で Parquet に書く（{MART_ROOT}/*.parquet）。
+#          2026-09-20、mart__edinet__financial_indicators（銘柄×期の主要財務指標）
+#          で初導入。
