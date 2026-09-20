@@ -107,34 +107,29 @@ typed as (
         d.submit_date_time
     from facts f
     join docs d on d.doc_id = f.doc_id
-),
-
-deduped as (
-    -- doc_id単位の重複排除(書類をまたいだ収縮はしない、1書類内の重複CSV行のみ対象)
-    select
-        *,
-        row_number() over (
-            partition by doc_id, element_id, context_id, consolidation
-            order by file_date desc
-        ) as _rn
-    from typed
 )
 
+-- doc_id単位の重複排除(書類をまたいだ収縮はしない、1書類内の重複CSV行のみ対象)。
+-- file_dateはdoc_id単位で不変(1書類=1file_date)のため、この粒度でのorder by
+-- file_dateによるタイブレークは意味を持たない(2026-09-17時点の設計の名残)。
+-- row_number()のwindow計算はitem_name/value_text等の幅広い列を計算中に保持し
+-- メモリを圧迫する(Mac Mini実機でOOM実測)ため、group by + max()による集約に
+-- 置き換える(同一キー内の重複行は任意の1件を採用、本来重複が無ければ結果は同じ)。
 select
-    file_date,
-    edinet_code,
+    max(file_date)          as file_date,
+    max(edinet_code)        as edinet_code,
     doc_id,
-    sec_code,
+    max(sec_code)            as sec_code,
     element_id,
-    item_name,
+    max(item_name)           as item_name,
     context_id,
-    relative_year,
+    max(relative_year)       as relative_year,
     consolidation,
-    period_instant,
-    unit_id,
-    unit,
-    value_text,
-    value_num,
-    submit_date_time
-from deduped
-where _rn = 1
+    max(period_instant)      as period_instant,
+    max(unit_id)             as unit_id,
+    max(unit)                as unit,
+    max(value_text)          as value_text,
+    max(value_num)           as value_num,
+    max(submit_date_time)    as submit_date_time
+from typed
+group by doc_id, element_id, context_id, consolidation
