@@ -12,7 +12,10 @@ models:
         data_tests: [not_null]
 
   - name: cleansed__edinet__facts
-    description: "EDINET CSV 明細の型付け・名寄せ版（毎回フル rebuild、Parquet）。"
+    description: >
+      EDINET CSV 明細の型付け・名寄せ版（incremental、Parquet）。粒度は
+      1行=1書類(doc_id)内の1項目。書類をまたいだ収縮はしない(2026-09-20修正、
+      詳細はモデルSQL冒頭コメント参照)。
     columns:
       - name: doc_id
         data_tests: [not_null]

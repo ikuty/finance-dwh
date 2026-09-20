@@ -1,8 +1,8 @@
--- cleansed__edinet__facts は (edinet_code, element_id, context_id, consolidation) で
--- 一意（最新提出のみ残す名寄せの結果）であること。行が返れば失敗。
+-- cleansed__edinet__facts は (doc_id, element_id, context_id, consolidation) で
+-- 一意（1書類内の重複排除の結果、書類をまたいだ収縮はしない）であること。行が返れば失敗。
 
 select
-    edinet_code,
+    doc_id,
     element_id,
     context_id,
     consolidation,
