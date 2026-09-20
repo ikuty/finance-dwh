@@ -6,21 +6,35 @@
 -- landingが813日・2.8GBまで積み上がった結果、dbt build全体の所要時間の約95%
 -- （980秒）をこのモデル単体が占めるようになった(2026-09-17実機判明)。incremental化した。
 --
+-- 粒度(2026-09-20修正、重要):
+--   当初は(edinet_code, element_id, context_id, consolidation)単位でsubmit_date_time
+--   最新の1行のみを残す設計だった(「同じcontext_idが複数書類にまたがるのは同一期間の
+--   訂正報告書である」という前提)。この前提が誤りだったことが判明した。EDINETの
+--   経営指標等(5期比較)のcontext_idは絶対年度を含まない相対ラベル
+--   (CurrentYearInstant="この書類の当期"等)であり、訂正ではない通常の翌年の提出でも
+--   同じcontext_id文字列が再利用される。このため「同一期間の訂正」と「別の期間の
+--   通常の新規提出」をキーだけで区別できず、後者まで誤って古い方を破棄してしまい、
+--   企業ごとに最新の1書類分(直近5期の比較列)以外の過去データが失われていた
+--   (実機確認: E01738の総資産額、経営指標等は最新1 doc_idの5期分のみが残存)。
+--   dedupキーにdoc_idを追加し、書類をまたいだ収縮をやめた(1行=1書類内の1項目)。
+--   EDINETのdoc_idは提出ごとに一意・不変で訂正報告書も新しいdoc_idを持つため、
+--   doc_id単位では収縮の必要がそもそも無い。「最新の値だけが欲しい」という用途は
+--   消費側(mart__edinet__financial_indicators等)がsubmit_date_time順に絞り込む。
+--
 -- incremental化の要点:
 --   - EDINETのlandingは未来方向だけでなく過去方向にも成長する(2022年分365日を
 --     後からバックフィルした実績あり)。よって「file_date > 既存最大値」という
 --     素朴な透かし方式は使えない。landingに存在するfile_date集合と{{ this }}に
 --     存在するfile_date集合の差分を毎回計算し、フォワード・バックフィルを
 --     問わず「まだ処理していないfile_date」だけを対象にする。
---   - 重複排除キー(edinet_code, element_id, context_id, consolidation)は
---     file_dateをまたいで成立する(原本と訂正報告書が別file_dateにあり得るため)。
---     新規file_date分の候補行は、対象キーで{{ this }}の現在の勝者と突き合わせ、
---     submit_date_timeがより新しい場合のみ置き換える(古ければ何も返さず、
---     既存行をそのまま温存する)。
+--   - doc_id単位に粒度を変更した(上記)ことで、新規file_date分の候補行が既存行と
+--     キー衝突することは無くなった(同一doc_idが複数file_dateに現れることは無い)。
+--     よって「既存より新しければ置き換える」upsert比較は不要になり、単純な
+--     insertで足りる(is_incremental()によるSELECT文の分岐も不要)。
 --   - materialized='external'はDuckDB内部テーブルを持たないため incremental
 --     戦略を使えない(dbt-duckdbのexternalマテリアライゼーションにincremental
 --     相当が無いことを確認済み)。materialized='incremental'(DuckDBカタログ内の
---     ネイティブテーブル)に変更し、post_hookで従来通りのParquetファイルへ
+--     ネイティブテーブル)を使い、post_hookで従来通りのParquetファイルへ
 --     エクスポートする(run_report.py等、下流はParquetファイルを直接読む契約の
 --     ため)。
 --   - landing側で既に処理済みのfile_dateの内容が後から`--force`等で修正された
@@ -28,13 +42,20 @@
 --     file_date集合差分方式では検知できない。発生したら
 --     `dbt run --full-refresh --select cleansed__edinet__facts`で手動フル
 --     再構築すること。
+--   - 書類をまたいだ収縮が無くなった分、行数はlandingの全履歴に近い規模まで
+--     増加する見込み。post_hookのParquetフルエクスポートが将来的に遅くなる
+--     可能性があるが、incremental化の際と同様「実機で問題が顕在化してから
+--     対処する」方針とする(2026-09-20時点で先回りの最適化はしない)。
 --
 -- 連結/個別は EDINET CSV の「連結・個別」列をそのまま使う（EDINET 算出済み）。
+-- ただし経営指標等(5期比較)項目はこの列が常に'other'になる(EDINET側の仕様、
+-- 連結/個別はcontext_idの_NonConsolidatedMemberサフィックス有無で判定する必要が
+-- あり、この列では判定できない。実機確認済み、下流のmartモデル側で対応)。
 -- 数値化は try_cast に任せる（"－" 等の非数値は NULL、decimal(38,4) で桁落ちしない）。
 
 {{ config(
     materialized='incremental',
-    unique_key=['edinet_code', 'element_id', 'context_id', 'consolidation'],
+    unique_key=['doc_id', 'element_id', 'context_id', 'consolidation'],
     incremental_strategy='delete+insert',
     post_hook="COPY (select * from {{ this }}) TO '" ~ env_var('CLEANSED_ROOT', '/data/cleansed') ~ "/edinet_facts.parquet' (FORMAT PARQUET)"
 ) }}
@@ -86,68 +107,29 @@ typed as (
         d.submit_date_time
     from facts f
     join docs d on d.doc_id = f.doc_id
-),
-
-deduped as (
-    select
-        *,
-        row_number() over (
-            partition by edinet_code, element_id, context_id, consolidation
-            order by submit_date_time desc nulls last, file_date desc, doc_id desc
-        ) as _rn
-    from typed
-),
-
-candidates as (
-    select * from deduped where _rn = 1
 )
 
-{% if is_incremental() %}
-
+-- doc_id単位の重複排除(書類をまたいだ収縮はしない、1書類内の重複CSV行のみ対象)。
+-- file_dateはdoc_id単位で不変(1書類=1file_date)のため、この粒度でのorder by
+-- file_dateによるタイブレークは意味を持たない(2026-09-17時点の設計の名残)。
+-- row_number()のwindow計算はitem_name/value_text等の幅広い列を計算中に保持し
+-- メモリを圧迫する(Mac Mini実機でOOM実測)ため、group by + max()による集約に
+-- 置き換える(同一キー内の重複行は任意の1件を採用、本来重複が無ければ結果は同じ)。
 select
-    c.file_date,
-    c.edinet_code,
-    c.doc_id,
-    c.sec_code,
-    c.element_id,
-    c.item_name,
-    c.context_id,
-    c.relative_year,
-    c.consolidation,
-    c.period_instant,
-    c.unit_id,
-    c.unit,
-    c.value_text,
-    c.value_num,
-    c.submit_date_time
-from candidates c
-left join {{ this }} existing
-    on existing.edinet_code = c.edinet_code
-    and existing.element_id = c.element_id
-    and existing.context_id = c.context_id
-    and existing.consolidation = c.consolidation
-where existing.edinet_code is null
-   or c.submit_date_time > existing.submit_date_time
-   or (c.submit_date_time is not null and existing.submit_date_time is null)
-
-{% else %}
-
-select
-    file_date,
-    edinet_code,
+    max(file_date)          as file_date,
+    max(edinet_code)        as edinet_code,
     doc_id,
-    sec_code,
+    max(sec_code)            as sec_code,
     element_id,
-    item_name,
+    max(item_name)           as item_name,
     context_id,
-    relative_year,
+    max(relative_year)       as relative_year,
     consolidation,
-    period_instant,
-    unit_id,
-    unit,
-    value_text,
-    value_num,
-    submit_date_time
-from candidates
-
-{% endif %}
+    max(period_instant)      as period_instant,
+    max(unit_id)             as unit_id,
+    max(unit)                as unit,
+    max(value_text)          as value_text,
+    max(value_num)           as value_num,
+    max(submit_date_time)    as submit_date_time
+from typed
+group by doc_id, element_id, context_id, consolidation

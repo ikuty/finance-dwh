@@ -59,7 +59,7 @@ def test_collect_report_data_counts_and_missing_file(tmp_path: Path) -> None:
 
     con = duckdb.connect()
     try:
-        data = collect_report_data(con, tmp_path)
+        data = collect_report_data(con, tmp_path, tmp_path)
     finally:
         con.close()
 
@@ -68,6 +68,7 @@ def test_collect_report_data_counts_and_missing_file(tmp_path: Path) -> None:
     assert counts[("cleansed", "edinet_facts")] is None
     assert counts[("cleansed", "jpx_stq_prices")] is None
     assert counts[("cleansed", "jpx_monthly_ohlc")] is None
+    assert counts[("mart", "edinet_financial_indicators")] is None
     assert data.edinet_latest_date == "2026-09-10"
     assert data.edinet_company_count == 3
     assert data.jpx_latest_date is None
@@ -87,7 +88,7 @@ def test_collect_report_data_counts_jpx_when_present(tmp_path: Path) -> None:
 
     con = duckdb.connect()
     try:
-        data = collect_report_data(con, tmp_path)
+        data = collect_report_data(con, tmp_path, tmp_path)
     finally:
         con.close()
 
@@ -109,13 +110,34 @@ def test_collect_report_data_counts_jpx_monthly_ohlc_when_present(tmp_path: Path
 
     con = duckdb.connect()
     try:
-        data = collect_report_data(con, tmp_path)
+        data = collect_report_data(con, tmp_path, tmp_path)
     finally:
         con.close()
 
     counts = {(s, n): v for s, n, v in data.layer_counts}
     assert counts[("cleansed", "jpx_monthly_ohlc")] == 3
     assert data.jpx_monthly_code_count == 2
+
+
+def test_collect_report_data_counts_mart_from_mart_root(tmp_path: Path) -> None:
+    cleansed_dir = tmp_path / "cleansed"
+    mart_dir = tmp_path / "mart"
+    write_parquet(
+        mart_dir / "edinet_financial_indicators.parquet",
+        [
+            {"edinet_code": "E00011", "fiscal_year": 1},
+            {"edinet_code": "E00022", "fiscal_year": 1},
+        ],
+    )
+
+    con = duckdb.connect()
+    try:
+        data = collect_report_data(con, cleansed_dir, mart_dir)
+    finally:
+        con.close()
+
+    counts = {(s, n): v for s, n, v in data.layer_counts}
+    assert counts[("mart", "edinet_financial_indicators")] == 2
 
 
 def _sample_data() -> ReportData:
