@@ -18,7 +18,10 @@
 -- 「当期」を表すcontext_idの接頭辞は書類種別で異なる(実機確認済み):
 --   有価証券報告書(annual): CurrentYear(Instant/Duration)
 --   四半期報告書(quarter系): Current(Quarter|YTD)(Instant/Duration)
---   半期報告書(half): Interim(Instant/Duration、Current接頭辞無し)
+--   半期報告書(half): Interim(Instant/Duration) または Current(Quarter|YTD)(Instant/Duration)
+--     の両方が実在する(2026-09-21実機判明。2024年度制度改正で新設された半期報告書は
+--     旧四半期報告書のcontext_idラベルをそのまま流用しているケースがあり、
+--     Interim系だけを見ると値が0件になる書類が実在した。両パターンを許容する)。
 --
 -- 訂正報告書対応: report_periodsは書類(doc_id)粒度で訂正報告書も別行として保持する
 -- ため、同一(edinet_code, fiscal_year, period_type)にdoc_idが複数あり得る。
@@ -120,7 +123,7 @@ current_period_facts as (
       and case
             when doc_type_code = '120' then regexp_matches(context_id, '^CurrentYear(Instant|Duration)(_NonConsolidatedMember)?$')
             when doc_type_code = '140' then regexp_matches(context_id, '^Current(Quarter|YTD)(Instant|Duration)(_NonConsolidatedMember)?$')
-            when doc_type_code = '160' then regexp_matches(context_id, '^Interim(Instant|Duration)(_NonConsolidatedMember)?$')
+            when doc_type_code = '160' then regexp_matches(context_id, '^(Interim|Current(Quarter|YTD))(Instant|Duration)(_NonConsolidatedMember)?$')
             else false
           end
 ),
