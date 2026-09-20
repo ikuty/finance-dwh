@@ -25,8 +25,10 @@ import duckdb
 JST = datetime.timezone(datetime.timedelta(hours=9), name="JST")
 
 CLEANSED_ROOT = os.environ.get("CLEANSED_ROOT", "/data/cleansed")
+MART_ROOT = os.environ.get("MART_ROOT", "/data/mart")
 
 # 行数を出す Parquet ファイル（表示順）。存在しなければ件数欄は "-"。
+# schema("cleansed"/"mart")でParquetの置き場所(cleansed_root/mart_root)を切り替える。
 COUNTED_RELATIONS: list[tuple[str, str]] = [
     ("cleansed", "edinet_documents"),
     ("cleansed", "edinet_facts"),
@@ -36,6 +38,7 @@ COUNTED_RELATIONS: list[tuple[str, str]] = [
     ("cleansed", "mufg_stock_splits"),
     ("cleansed", "mufg_stock_consolidations"),
     ("cleansed", "mufg_company_name_changes"),
+    ("mart", "edinet_financial_indicators"),
 ]
 
 
@@ -93,8 +96,11 @@ def _scalar_pair(con: DbConn, sql: str) -> tuple[str | None, int | None]:
     return (first, _as_int(row[1]))
 
 
-def collect_report_data(con: DbConn, cleansed_root: Path) -> ReportData:
-    layer_counts = [(schema, name, _count(con, cleansed_root / f"{name}.parquet")) for schema, name in COUNTED_RELATIONS]
+def collect_report_data(con: DbConn, cleansed_root: Path, mart_root: Path) -> ReportData:
+    roots = {"cleansed": cleansed_root, "mart": mart_root}
+    layer_counts = [
+        (schema, name, _count(con, roots[schema] / f"{name}.parquet")) for schema, name in COUNTED_RELATIONS
+    ]
 
     docs_path = cleansed_root / "edinet_documents.parquet"
     edinet_latest, edinet_companies = (None, None)
@@ -222,12 +228,15 @@ def summary_text(data: ReportData, dbt: DbtOutcome) -> str:
     )
 
 
-def generate_report(dbt: DbtOutcome, *, cleansed_root: str | None = None) -> tuple[str, str]:
+def generate_report(
+    dbt: DbtOutcome, *, cleansed_root: str | None = None, mart_root: str | None = None
+) -> tuple[str, str]:
     """レポート HTML と Slack 用の短いサマリ文字列を返す。"""
     root = Path(cleansed_root or CLEANSED_ROOT)
+    mroot = Path(mart_root or MART_ROOT)
     con = duckdb.connect()
     try:
-        data = collect_report_data(con, root)
+        data = collect_report_data(con, root, mroot)
     finally:
         con.close()
     return render_html(data, dbt), summary_text(data, dbt)
