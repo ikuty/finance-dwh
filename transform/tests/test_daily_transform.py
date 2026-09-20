@@ -35,19 +35,22 @@ def test_build_summary_text_failure() -> None:
     assert build_summary_text(r).startswith("❌ 失敗")
 
 
-def test_ensure_data_dirs_creates_landing_cleansed_and_duckdb_parent(
+def test_ensure_data_dirs_creates_landing_cleansed_mart_and_duckdb_parent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     landing = tmp_path / "d1" / "landing"
     cleansed = tmp_path / "d2" / "cleansed"
+    mart = tmp_path / "d4" / "mart"
     duckdb_path = tmp_path / "d3" / "sub" / "finance_dwh.duckdb"
     monkeypatch.setenv("LANDING_ROOT", str(landing))
     monkeypatch.setenv("CLEANSED_ROOT", str(cleansed))
+    monkeypatch.setenv("MART_ROOT", str(mart))
     monkeypatch.setenv("DUCKDB_PATH", str(duckdb_path))
 
     ensure_data_dirs()
 
     assert landing.is_dir()
     assert cleansed.is_dir()
+    assert mart.is_dir()
     assert duckdb_path.parent.is_dir()
     assert not duckdb_path.exists()  # ファイル自体は作らない、親ディレクトリだけ

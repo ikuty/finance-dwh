@@ -1,0 +1,65 @@
+version: 2
+
+models:
+  - name: mart__edinet__financial_indicators
+    description: >
+      銘柄(edinet_code)×期(fiscal_year, period_type)ごとの主要財務指標（案B、毎回フル
+      rebuild、Parquet）。cleansed__edinet__report_periods と cleansed__edinet__facts
+      を doc_id で結合して構築する。J-GAAP/IFRS/US GAAPはcoalesce()で1列に統合。
+    columns:
+      - name: doc_id
+        description: "根拠となった書類のID（同一期に複数提出があれば submit_date_time 最新の1件）。"
+        data_tests: [not_null]
+      - name: edinet_code
+        description: "EDINETコード。"
+        data_tests: [not_null]
+      - name: sec_code
+        description: "銘柄コード。"
+      - name: filer_name
+        description: "提出者名。"
+      - name: fiscal_year
+        description: "第N期の期数。"
+        data_tests: [not_null]
+      - name: period_type
+        description: "annual/half/q1/q2/q3/q4/quarter。"
+        data_tests: [not_null]
+      - name: period_start
+        description: "対象期間の開始日。"
+      - name: period_end
+        description: "対象期間の終了日。"
+      - name: regime
+        description: "旧制度/移行期/新制度（cleansed__edinet__report_periods由来）。"
+      - name: accounting_standard
+        description: "会計基準（DEI「会計基準、DEI」由来。Japan GAAP/IFRS/US GAAP等）。"
+      - name: has_consolidated
+        description: "連結決算の有無（DEI「連結決算の有無、DEI」由来）。"
+      - name: total_assets
+        description: "総資産額。連結優先・個別フォールバック、J-GAAP/IFRS/US GAAPをcoalesce。"
+      - name: net_assets
+        description: "純資産額（IFRSは親会社所有者帰属持分）。"
+      - name: equity_ratio
+        description: "自己資本比率。"
+      - name: ordinary_income
+        description: "経常利益。IFRS/US GAAPに対応概念が無いためそれらの会計基準ではNULL。"
+      - name: net_income
+        description: "当期純利益（親会社株主に帰属する分を優先、無ければ当期純利益）。"
+      - name: sales
+        description: "売上高（業種により営業収益・経常収益等の代替項目を含む）。"
+      - name: eps
+        description: "1株当たり当期純利益。"
+      - name: bps
+        description: "1株当たり純資産額。"
+      - name: roe
+        description: "自己資本利益率。"
+      - name: per
+        description: "株価収益率。"
+      - name: operating_cf
+        description: "営業活動によるキャッシュ・フロー。"
+      - name: investing_cf
+        description: "投資活動によるキャッシュ・フロー。"
+      - name: financing_cf
+        description: "財務活動によるキャッシュ・フロー。"
+      - name: capital
+        description: "資本金。IFRS/US GAAPに対応項目が無いためそれらの会計基準ではNULL。"
+      - name: payout_ratio
+        description: "配当性向。IFRS/US GAAPに対応項目が無いためそれらの会計基準ではNULL。"
