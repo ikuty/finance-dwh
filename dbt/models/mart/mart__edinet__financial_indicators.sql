@@ -15,6 +15,14 @@
 --   サフィックス有無で判定する(無し=連結、有り=個別、個別のみ提出企業向けに
 --   個別へフォールバックする)。
 --
+--   優先順位の組み方(2026-09-21修正、重要): 「項目名ごとに連結/個別を解決してから
+--   項目名優先順位でcoalesce」ではなく、「全候補項目名を横断して連結を優先順位通りに
+--   試し、どれも無ければ全候補項目名を横断して個別を試す」という2段構成にする。
+--   前者だと、ある指標の候補項目名の一部が個別のみ・別の候補が連結ありという場合に、
+--   優先順位が先というだけで個別のみの小さい値を誤って採用してしまう(実機確認:
+--   三井住友FGの経常収益(連結、9.35兆円)より営業収益(個別のみ、9,368億円)が
+--   coalesceの優先順位で先に来ていたため、salesに個別のみの小さい値が入っていた)。
+--
 -- 「当期」を表すcontext_idの接頭辞は書類種別で異なる(実機確認済み):
 --   有価証券報告書(annual): CurrentYear(Instant/Duration)
 --   四半期報告書(quarter系): Current(Quarter|YTD)(Instant/Duration)
@@ -128,93 +136,132 @@ current_period_facts as (
           end
 ),
 
--- 連結優先・個別フォールバックをitem_name単位でまず解決する
-per_item as (
-    select
-        doc_id,
-        item_name,
-        coalesce(
-            max(value_num) filter (where not is_non_consolidated),
-            max(value_num) filter (where is_non_consolidated)
-        ) as best_value
-    from current_period_facts
-    group by doc_id, item_name
-),
-
--- item_name単位の値をJ-GAAP/IFRS/US GAAPの優先順でcoalesceし、指標列へpivotする
+-- 全候補項目名を横断して連結を優先順位通りに試し、どれも無ければ全候補項目名を
+-- 横断して個別を試す(2026-09-21修正、詳細は冒頭コメント参照)。
 pivoted as (
     select
         doc_id,
         coalesce(
-            max(case when item_name = '総資産額、経営指標等' then best_value end),
-            max(case when item_name = '総資産額（IFRS）、経営指標等' then best_value end),
-            max(case when item_name = '総資産額（US GAAP）、経営指標等' then best_value end)
+            max(case when item_name = '総資産額、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '総資産額（IFRS）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '総資産額（US GAAP）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '総資産額、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '総資産額（IFRS）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '総資産額（US GAAP）、経営指標等' and is_non_consolidated then value_num end)
         ) as total_assets,
         coalesce(
-            max(case when item_name = '純資産額、経営指標等' then best_value end),
-            max(case when item_name = '親会社の所有者に帰属する持分（IFRS）、経営指標等' then best_value end),
-            max(case when item_name = '純資産額（US GAAP）、経営指標等' then best_value end)
+            max(case when item_name = '純資産額、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '親会社の所有者に帰属する持分（IFRS）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '純資産額（US GAAP）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '純資産額、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '親会社の所有者に帰属する持分（IFRS）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '純資産額（US GAAP）、経営指標等' and is_non_consolidated then value_num end)
         ) as net_assets,
         coalesce(
-            max(case when item_name = '自己資本比率、経営指標等' then best_value end),
-            max(case when item_name = '親会社所有者帰属持分比率（IFRS）、経営指標等' then best_value end),
-            max(case when item_name = '自己資本比率（US GAAP）、経営指標等' then best_value end)
+            max(case when item_name = '自己資本比率、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '親会社所有者帰属持分比率（IFRS）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '自己資本比率（US GAAP）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '自己資本比率、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '親会社所有者帰属持分比率（IFRS）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '自己資本比率（US GAAP）、経営指標等' and is_non_consolidated then value_num end)
         ) as equity_ratio,
-        max(case when item_name = '経常利益又は経常損失（△）、経営指標等' then best_value end) as ordinary_income,
         coalesce(
-            max(case when item_name = '親会社株主に帰属する当期純利益又は親会社株主に帰属する当期純損失（△）、経営指標等' then best_value end),
-            max(case when item_name = '当期純利益又は当期純損失（△）、経営指標等' then best_value end),
-            max(case when item_name = '当期利益又は当期損失（△）：親会社の所有者に帰属（IFRS）、経営指標等' then best_value end),
-            max(case when item_name = '当社株主に帰属する純利益又は純損失（△）（US GAAP）、経営指標等' then best_value end)
+            max(case when item_name = '経常利益又は経常損失（△）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '経常利益又は経常損失（△）、経営指標等' and is_non_consolidated then value_num end)
+        ) as ordinary_income,
+        coalesce(
+            max(case when item_name = '親会社株主に帰属する当期純利益又は親会社株主に帰属する当期純損失（△）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '当期純利益又は当期純損失（△）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '当期利益又は当期損失（△）：親会社の所有者に帰属（IFRS）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '当社株主に帰属する純利益又は純損失（△）（US GAAP）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '親会社株主に帰属する当期純利益又は親会社株主に帰属する当期純損失（△）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '当期純利益又は当期純損失（△）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '当期利益又は当期損失（△）：親会社の所有者に帰属（IFRS）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '当社株主に帰属する純利益又は純損失（△）（US GAAP）、経営指標等' and is_non_consolidated then value_num end)
         ) as net_income,
         coalesce(
-            max(case when item_name = '売上高、経営指標等' then best_value end),
-            max(case when item_name = '営業収益、経営指標等' then best_value end),
-            max(case when item_name = '経常収益、経営指標等' then best_value end),
-            max(case when item_name = '営業収入、経営指標等' then best_value end),
-            max(case when item_name = '営業総収入、経営指標等' then best_value end),
-            max(case when item_name = '売上収益（IFRS）、経営指標等' then best_value end),
-            max(case when item_name = '売上収益、経営指標等' then best_value end),
-            max(case when item_name = '売上高（US GAAP）、経営指標等' then best_value end)
+            max(case when item_name = '売上高、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '営業収益、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '経常収益、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '営業収入、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '営業総収入、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '売上収益（IFRS）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '売上収益、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '売上高（US GAAP）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '売上高、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '営業収益、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '経常収益、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '営業収入、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '営業総収入、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '売上収益（IFRS）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '売上収益、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '売上高（US GAAP）、経営指標等' and is_non_consolidated then value_num end)
         ) as sales,
         coalesce(
-            max(case when item_name = '１株当たり当期純利益又は当期純損失（△）、経営指標等' then best_value end),
-            max(case when item_name = '基本的１株当たり利益又は損失（△）（IFRS）、経営指標等' then best_value end),
-            max(case when item_name = '基本的１株当たり当社株主に帰属する利益又は損失（△）（US GAAP）、経営指標等' then best_value end)
+            max(case when item_name = '１株当たり当期純利益又は当期純損失（△）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '基本的１株当たり利益又は損失（△）（IFRS）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '基本的１株当たり当社株主に帰属する利益又は損失（△）（US GAAP）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '１株当たり当期純利益又は当期純損失（△）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '基本的１株当たり利益又は損失（△）（IFRS）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '基本的１株当たり当社株主に帰属する利益又は損失（△）（US GAAP）、経営指標等' and is_non_consolidated then value_num end)
         ) as eps,
         coalesce(
-            max(case when item_name = '１株当たり純資産額、経営指標等' then best_value end),
-            max(case when item_name = '１株当たり親会社所有者帰属持分（IFRS）、経営指標等' then best_value end),
-            max(case when item_name = '１株当たり株主資本（US GAAP）、経営指標等' then best_value end)
+            max(case when item_name = '１株当たり純資産額、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '１株当たり親会社所有者帰属持分（IFRS）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '１株当たり株主資本（US GAAP）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '１株当たり純資産額、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '１株当たり親会社所有者帰属持分（IFRS）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '１株当たり株主資本（US GAAP）、経営指標等' and is_non_consolidated then value_num end)
         ) as bps,
         coalesce(
-            max(case when item_name = '自己資本利益率、経営指標等' then best_value end),
-            max(case when item_name = '親会社所有者帰属持分利益率（IFRS）、経営指標等' then best_value end),
-            max(case when item_name = '株主資本利益率（US GAAP）、経営指標等' then best_value end)
+            max(case when item_name = '自己資本利益率、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '親会社所有者帰属持分利益率（IFRS）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '株主資本利益率（US GAAP）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '自己資本利益率、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '親会社所有者帰属持分利益率（IFRS）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '株主資本利益率（US GAAP）、経営指標等' and is_non_consolidated then value_num end)
         ) as roe,
         coalesce(
-            max(case when item_name = '株価収益率、経営指標等' then best_value end),
-            max(case when item_name = '株価収益率（IFRS）、経営指標等' then best_value end),
-            max(case when item_name = '株価収益率（US GAAP）、経営指標等' then best_value end)
+            max(case when item_name = '株価収益率、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '株価収益率（IFRS）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '株価収益率（US GAAP）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '株価収益率、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '株価収益率（IFRS）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '株価収益率（US GAAP）、経営指標等' and is_non_consolidated then value_num end)
         ) as per,
         coalesce(
-            max(case when item_name = '営業活動によるキャッシュ・フロー、経営指標等' then best_value end),
-            max(case when item_name = '営業活動によるキャッシュ・フロー（IFRS）、経営指標等' then best_value end),
-            max(case when item_name = '営業活動によるキャッシュ・フロー（US GAAP）、経営指標等' then best_value end)
+            max(case when item_name = '営業活動によるキャッシュ・フロー、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '営業活動によるキャッシュ・フロー（IFRS）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '営業活動によるキャッシュ・フロー（US GAAP）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '営業活動によるキャッシュ・フロー、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '営業活動によるキャッシュ・フロー（IFRS）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '営業活動によるキャッシュ・フロー（US GAAP）、経営指標等' and is_non_consolidated then value_num end)
         ) as operating_cf,
         coalesce(
-            max(case when item_name = '投資活動によるキャッシュ・フロー、経営指標等' then best_value end),
-            max(case when item_name = '投資活動によるキャッシュ・フロー（IFRS）、経営指標等' then best_value end),
-            max(case when item_name = '投資活動によるキャッシュ・フロー（US GAAP）、経営指標等' then best_value end)
+            max(case when item_name = '投資活動によるキャッシュ・フロー、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '投資活動によるキャッシュ・フロー（IFRS）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '投資活動によるキャッシュ・フロー（US GAAP）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '投資活動によるキャッシュ・フロー、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '投資活動によるキャッシュ・フロー（IFRS）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '投資活動によるキャッシュ・フロー（US GAAP）、経営指標等' and is_non_consolidated then value_num end)
         ) as investing_cf,
         coalesce(
-            max(case when item_name = '財務活動によるキャッシュ・フロー、経営指標等' then best_value end),
-            max(case when item_name = '財務活動によるキャッシュ・フロー（IFRS）、経営指標等' then best_value end),
-            max(case when item_name = '財務活動によるキャッシュ・フロー（US GAAP）、経営指標等' then best_value end)
+            max(case when item_name = '財務活動によるキャッシュ・フロー、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '財務活動によるキャッシュ・フロー（IFRS）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '財務活動によるキャッシュ・フロー（US GAAP）、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '財務活動によるキャッシュ・フロー、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '財務活動によるキャッシュ・フロー（IFRS）、経営指標等' and is_non_consolidated then value_num end),
+            max(case when item_name = '財務活動によるキャッシュ・フロー（US GAAP）、経営指標等' and is_non_consolidated then value_num end)
         ) as financing_cf,
-        max(case when item_name = '資本金、経営指標等' then best_value end) as capital,
-        max(case when item_name = '配当性向、経営指標等' then best_value end) as payout_ratio
-    from per_item
+        coalesce(
+            max(case when item_name = '資本金、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '資本金、経営指標等' and is_non_consolidated then value_num end)
+        ) as capital,
+        coalesce(
+            max(case when item_name = '配当性向、経営指標等' and not is_non_consolidated then value_num end),
+            max(case when item_name = '配当性向、経営指標等' and is_non_consolidated then value_num end)
+        ) as payout_ratio
+    from current_period_facts
     group by doc_id
 ),
 
