@@ -2,16 +2,24 @@
 
 ## 背景
 
-`mart__edinet__financial_indicators`の実装後、実データを確認する過程で2件のバグが
+`mart__edinet__financial_indicators`の実装後、実データを確認する過程で複数のバグが
 見つかった（いずれも外部データとの突合ではなく、値を直接見て気づいたもの）。
 
 1. 半期報告書(period_type='half')のcontext_id判定漏れ（`Interim`のみを見ていたが
    `CurrentQuarter`/`CurrentYTD`ラベルを使う書類が実在し、指標が全てNULLになっていた）
 2. 複数候補項目名（J-GAAP内の売上高/営業収益/経常収益等）のcoalesce優先順位誤り
    （個別のみ存在する項目が、連結で存在する別項目より優先されてしまうケースがあった。
-   sec_code=8316で発覚）
+   sec_code=8316で発覚、PR#13で修正）
+3. 会計基準をまたいだcoalesceの誤り（IFRS採用企業でも個別財務諸表は通常J-GAAPの
+   まま作成されるため、1つの書類にJ-GAAP名タグとIFRS名タグが混在しうる。優先順位
+   だけで選ぶと企業自身の会計基準と無関係な値を採用してしまう。sec_code=2282等で
+   発覚）。**この根本原因への対応として、2026-09-21にintermediate層を導入**し、
+   会計基準ごとに独立したモデル（`intermediate__edinet__{jgaap,ifrs,usgaap}_
+   financial_facts`）で指標を抽出するよう再設計した（詳細は`docs/architecture.md`・
+   各モデルのコメント参照）。martはそれらを企業自身のaccounting_standardに基づいて
+   組み合わせるだけの薄い層になった。
 
-どちらも「値を目視して気づく」形で発見されており、体系的なテストで検出できる性質の
+いずれも「値を目視して気づく」形で発見されており、体系的なテストで検出できる性質の
 バグだった。外部データ（IR Bank等）との突合は、利用規約上の制約・データ取得自体の
 不確実性（PDF OCR等）を伴うため採用せず、**当システム内部だけで成立する数学的な
 整合性**をdbtのsingular testとして実装する方針とした（`dbt/tests/assert_*.sql`、
@@ -58,3 +66,8 @@ severity=warnのテストはbuildを失敗させない（目視確認用、閾�
   martに追加すれば、`bps ≈ net_assets / 発行済株式数`等の整合性チェックが可能になる。
 - `capital`（資本金）は通常期中不変のため、同一edinet_codeの連続する期で大きく変動して
   いないかのチェックは追加できる余地がある（増資等の正当な変動は許容する必要がある）。
+- **intermediate層単体でのテスト**: 現在の4テストはmart（会計基準統合後の最終出力）に
+  対するものだが、`intermediate__edinet__{jgaap,ifrs,usgaap}_financial_facts`単体に
+  対しても同種のテスト（単調性・大小関係等）を会計基準ごとに書けば、「どの会計基準の
+  抽出ロジックに問題があるか」をより直接的に特定できる。今回は導入していない
+  （2026-09-21時点でのnext step候補）。
