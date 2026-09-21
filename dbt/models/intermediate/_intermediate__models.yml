@@ -1,0 +1,41 @@
+version: 2
+
+models:
+  - name: intermediate__edinet__dei_facts
+    description: >
+      書類(doc_id)単位のDEI（会計基準・連結決算の有無、毎回フル rebuild、Parquet）。
+      J-GAAP/IFRS/US GAAP各intermediateモデル・martの両方から参照される共通部品。
+    columns:
+      - name: doc_id
+        data_tests: [not_null, unique]
+      - name: accounting_standard
+        description: "会計基準（Japan GAAP/IFRS/US GAAP等）。DEI「会計基準、DEI」由来。"
+      - name: has_consolidated
+        description: "連結決算の有無。DEI「連結決算の有無、DEI」由来。"
+
+  - name: intermediate__edinet__jgaap_financial_facts
+    description: >
+      書類(doc_id)単位のJ-GAAP経営指標等（14指標、毎回フル rebuild、Parquet）。
+      J-GAAP名のitem_nameのみを対象とし、IFRS/US GAAPとは混在させない。
+    columns:
+      - name: doc_id
+        data_tests: [not_null, unique]
+
+  - name: intermediate__edinet__ifrs_financial_facts
+    description: >
+      書類(doc_id)単位のIFRS経営指標等（14指標、毎回フル rebuild、Parquet）。
+      IFRS名のitem_nameのみを対象とし、J-GAAP/US GAAPとは混在させない。
+      ordinary_income/capital/payout_ratioはIFRSに対応概念が無いため常にNULL。
+    columns:
+      - name: doc_id
+        data_tests: [not_null, unique]
+
+  - name: intermediate__edinet__usgaap_financial_facts
+    description: >
+      書類(doc_id)単位のUS GAAP経営指標等（14指標、毎回フル rebuild、Parquet）。
+      US GAAP名のitem_nameのみを対象とし、J-GAAP/IFRSとは混在させない。
+      対象企業数は極めて少ない（10〜14社程度）。ordinary_income/capital/payout_ratioは
+      US GAAPに対応概念が無いため常にNULL。
+    columns:
+      - name: doc_id
+        data_tests: [not_null, unique]

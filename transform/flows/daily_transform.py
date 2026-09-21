@@ -89,7 +89,7 @@ class DbtBuildResult:
 
 @task
 def ensure_data_dirs() -> None:
-    """landing・cleansed・mart・.duckdb カタログの出力先ディレクトリを用意する。
+    """landing・cleansed・intermediate・mart・.duckdb カタログの出力先ディレクトリを用意する。
 
     dbt の external materialization（Parquet 書き出し）は親ディレクトリを
     自動作成しないため、無いと `IO Error: Cannot open file` で落ちる。
@@ -97,6 +97,7 @@ def ensure_data_dirs() -> None:
     for env_var, default in (
         ("LANDING_ROOT", "/data/landing"),
         ("CLEANSED_ROOT", "/data/cleansed"),
+        ("INTERMEDIATE_ROOT", "/data/intermediate"),
         ("MART_ROOT", "/data/mart"),
     ):
         Path(os.environ.get(env_var, default)).mkdir(parents=True, exist_ok=True)

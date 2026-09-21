@@ -41,9 +41,11 @@ def test_ensure_data_dirs_creates_landing_cleansed_mart_and_duckdb_parent(
     landing = tmp_path / "d1" / "landing"
     cleansed = tmp_path / "d2" / "cleansed"
     mart = tmp_path / "d4" / "mart"
+    intermediate = tmp_path / "d5" / "intermediate"
     duckdb_path = tmp_path / "d3" / "sub" / "finance_dwh.duckdb"
     monkeypatch.setenv("LANDING_ROOT", str(landing))
     monkeypatch.setenv("CLEANSED_ROOT", str(cleansed))
+    monkeypatch.setenv("INTERMEDIATE_ROOT", str(intermediate))
     monkeypatch.setenv("MART_ROOT", str(mart))
     monkeypatch.setenv("DUCKDB_PATH", str(duckdb_path))
 
@@ -51,6 +53,7 @@ def test_ensure_data_dirs_creates_landing_cleansed_mart_and_duckdb_parent(
 
     assert landing.is_dir()
     assert cleansed.is_dir()
+    assert intermediate.is_dir()
     assert mart.is_dir()
     assert duckdb_path.parent.is_dir()
     assert not duckdb_path.exists()  # ファイル自体は作らない、親ディレクトリだけ

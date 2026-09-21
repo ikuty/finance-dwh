@@ -59,7 +59,7 @@ def test_collect_report_data_counts_and_missing_file(tmp_path: Path) -> None:
 
     con = duckdb.connect()
     try:
-        data = collect_report_data(con, tmp_path, tmp_path)
+        data = collect_report_data(con, tmp_path, tmp_path, tmp_path)
     finally:
         con.close()
 
@@ -68,6 +68,7 @@ def test_collect_report_data_counts_and_missing_file(tmp_path: Path) -> None:
     assert counts[("cleansed", "edinet_facts")] is None
     assert counts[("cleansed", "jpx_stq_prices")] is None
     assert counts[("cleansed", "jpx_monthly_ohlc")] is None
+    assert counts[("intermediate", "dei_facts")] is None
     assert counts[("mart", "edinet_financial_indicators")] is None
     assert data.edinet_latest_date == "2026-09-10"
     assert data.edinet_company_count == 3
@@ -88,7 +89,7 @@ def test_collect_report_data_counts_jpx_when_present(tmp_path: Path) -> None:
 
     con = duckdb.connect()
     try:
-        data = collect_report_data(con, tmp_path, tmp_path)
+        data = collect_report_data(con, tmp_path, tmp_path, tmp_path)
     finally:
         con.close()
 
@@ -110,7 +111,7 @@ def test_collect_report_data_counts_jpx_monthly_ohlc_when_present(tmp_path: Path
 
     con = duckdb.connect()
     try:
-        data = collect_report_data(con, tmp_path, tmp_path)
+        data = collect_report_data(con, tmp_path, tmp_path, tmp_path)
     finally:
         con.close()
 
@@ -122,6 +123,7 @@ def test_collect_report_data_counts_jpx_monthly_ohlc_when_present(tmp_path: Path
 def test_collect_report_data_counts_mart_from_mart_root(tmp_path: Path) -> None:
     cleansed_dir = tmp_path / "cleansed"
     mart_dir = tmp_path / "mart"
+    intermediate_dir = tmp_path / "intermediate"
     write_parquet(
         mart_dir / "edinet_financial_indicators.parquet",
         [
@@ -132,12 +134,35 @@ def test_collect_report_data_counts_mart_from_mart_root(tmp_path: Path) -> None:
 
     con = duckdb.connect()
     try:
-        data = collect_report_data(con, cleansed_dir, mart_dir)
+        data = collect_report_data(con, cleansed_dir, mart_dir, intermediate_dir)
     finally:
         con.close()
 
     counts = {(s, n): v for s, n, v in data.layer_counts}
     assert counts[("mart", "edinet_financial_indicators")] == 2
+
+
+def test_collect_report_data_counts_intermediate_from_intermediate_root(tmp_path: Path) -> None:
+    cleansed_dir = tmp_path / "cleansed"
+    mart_dir = tmp_path / "mart"
+    intermediate_dir = tmp_path / "intermediate"
+    write_parquet(
+        intermediate_dir / "jgaap_financial_facts.parquet",
+        [
+            {"doc_id": "S1000001"},
+            {"doc_id": "S1000002"},
+            {"doc_id": "S1000003"},
+        ],
+    )
+
+    con = duckdb.connect()
+    try:
+        data = collect_report_data(con, cleansed_dir, mart_dir, intermediate_dir)
+    finally:
+        con.close()
+
+    counts = {(s, n): v for s, n, v in data.layer_counts}
+    assert counts[("intermediate", "jgaap_financial_facts")] == 3
 
 
 def _sample_data() -> ReportData:
