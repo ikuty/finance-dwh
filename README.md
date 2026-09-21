@@ -3,8 +3,8 @@
 個人運用の財務データ分析基盤における**ウェアハウス層**。金融庁のEDINET API v2
 （`https://api.edinet-fsa.go.jp/api/v2/`）から入手した有価証券報告書・四半期報告書
 等の開示書類データをデータソースとするレイク層（`finance-lake`、生データのまま保存）
-を入力とし、raw / landing / cleansed / mart の層からなる DWH を構築する。将来的には、
-AI（エージェント・LLM経由の問い合わせ）・BI（ダッシュボード等）双方から指標定義の
+を入力とし、raw / landing / cleansed / intermediate / mart の層からなる DWH を構築する。
+将来的には、AI（エージェント・LLM経由の問い合わせ）・BI（ダッシュボード等）双方から指標定義の
 一貫性を保てるよう、セマンティックレイヤーの構築を目指している（未着手、mart層と
 同様「利用目的が固まってから」着手する方針）。
 
@@ -43,6 +43,7 @@ root `CLAUDE.md`参照）。
 | raw | DuckDB の view モデル（レイクを直接 glob 読み） | 書類一覧インデックス等、パース不要なものをそのまま view 化 |
 | landing | Parquet（`{DATA_DIR}/landing/{table}/file_date=*/part.parquet`）。Prefect が日付単位で書く | レイクの生データ（CSV/PDF 等）を Python でパースして Parquet に固定化 |
 | cleansed | dbt-duckdb モデル（external materialization、一部 incremental） | landing/raw を型付け・名寄せ。ビジネスロジックは最小限 |
+| intermediate | dbt モデル（external materialization） | cleansedをビジネスロジックを含めて加工する中間モデル（会計基準ごとの指標抽出等） |
 | mart | dbt モデル（external materialization） | 具体的な利用目的を持つ集計・統合（銘柄×期の指標等） |
 
 詳細な設計判断（なぜ raw と landing で読み方式が違うか等）は `docs/architecture.md`
@@ -53,10 +54,10 @@ root `CLAUDE.md`参照）。
 ```
 compose/       docker compose（transform 使い捨てコンテナのみ、常駐サービスなし）
 transform/     Dockerfile / fdw/（EDINET CSV 抽出等）/ flows/（Prefect フロー）/ report/（実行レポート）
-dbt/           dbt プロジェクト（dbt-duckdb、raw/cleansed/mart モデル・seeds・tests）
+dbt/           dbt プロジェクト（dbt-duckdb、raw/cleansed/intermediate/mart モデル・seeds・tests）
 systemd/       Mac Mini 用 unit テンプレート（transform.service/.timer の2本）
 .github/workflows/  ci / build-push / deploy / gitleaks
-docs/          architecture / raw_landing_design / deployment_design
+docs/          architecture / raw_landing_design / deployment_design / mart_validation
 CLAUDE.md      固有の設計判断
 ```
 
@@ -71,7 +72,11 @@ CLAUDE.md      固有の設計判断
 | `cleansed__jpx__stq_prices` | cleansed | JPX形式C（株式相場表・詳細日次）の型付け版 |
 | `cleansed__jpx__monthly_ohlc` | cleansed | JPX形式B（月次簡易OHLC）の型付け版 |
 | `cleansed__mufg__*` | cleansed | 商号変更・株式併合・株式分割の履歴 |
-| `mart__edinet__financial_indicators` | mart | 銘柄×期の主要財務指標（総資産額・EPS・ROE等、J-GAAP/IFRS/US GAAP統合） |
+| `intermediate__edinet__dei_facts` | intermediate | 書類単位のDEI（会計基準・連結決算の有無） |
+| `intermediate__edinet__jgaap_financial_facts` | intermediate | J-GAAP名項目のみで抽出した書類単位の14指標 |
+| `intermediate__edinet__ifrs_financial_facts` | intermediate | IFRS名項目のみで抽出した書類単位の14指標 |
+| `intermediate__edinet__usgaap_financial_facts` | intermediate | US GAAP名項目のみで抽出した書類単位の14指標 |
+| `mart__edinet__financial_indicators` | mart | 銘柄×期の主要財務指標（総資産額・EPS・ROE等）。企業自身のaccounting_standardを優先しつつ3つのintermediateをcoalesce |
 
 各モデルの列定義・テストは `dbt/models/*/_*.yml` を参照。
 
@@ -88,7 +93,7 @@ docker compose run --rm transform               # Prefect フロー（landing �
 
 `.env` の `S3_BUCKET_NAME` / `SLACK_WEBHOOK_URL` を空にすれば S3・Slack はスキップされる。
 素の dbt を叩くときは `docker compose run --rm --entrypoint dbt transform <args>`。
-永続化される実体（`.duckdb` カタログ・landing/cleansed/mart の Parquet）は `DATA_DIR`
+永続化される実体（`.duckdb` カタログ・landing/cleansed/intermediate/mart の Parquet）は `DATA_DIR`
 （既定 `../data`）配下。
 
 ## 開発ワークフロー（ブランチ戦略）
@@ -131,6 +136,9 @@ Mac Mini（Ubuntu 24.04、7.7GB RAM）上でsystemdタイマーにより日次�
   full-refresh等）ではバッチ分割が必要になることがある。
 - mart層は`mart__edinet__financial_indicators`が最初の実装（2026-09-20〜）。今後の
   拡張は利用目的が固まってから追加する方針。
+- intermediate層は、会計基準(J-GAAP/IFRS/US GAAP)をまたいだcoalesceが原因のバグを
+  受けて2026-09-21に導入（詳細な経緯・実データでの検証は`docs/mart_validation.md`
+  参照）。
 
 ## ライセンス
 
@@ -138,5 +146,5 @@ MIT License（`LICENSE`参照）
 
 ## 参照
 
-詳細な設計は `docs/`（`architecture.md` / `raw_landing_design.md` / `deployment_design.md`）
-と `CLAUDE.md` を参照。
+詳細な設計は `docs/`（`architecture.md` / `raw_landing_design.md` / `deployment_design.md` /
+`mart_validation.md`）と `CLAUDE.md` を参照。
