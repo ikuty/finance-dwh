@@ -18,6 +18,8 @@ models:
       +schema: raw
     cleansed:
       +schema: cleansed
+    intermediate:
+      +schema: intermediate
     mart:
       +schema: mart
 
@@ -30,6 +32,13 @@ models:
 #          （models/cleansed/_cleansed__sources.yml）。
 # cleansed: landing / raw から型付け・名寄せする dbt モデル。external
 #          materialization で Parquet に書く（{CLEANSED_ROOT}/*.parquet）。
+# intermediate: cleansedを会計基準(J-GAAP/IFRS/US GAAP)等の単位でビジネスロジックを
+#          含めて加工する中間モデル（models/intermediate/）。external materialization
+#          で Parquet に書く（{INTERMEDIATE_ROOT}/*.parquet）。2026-09-21、
+#          複数会計基準の項目名をmart側の1つのcoalesce chainに混在させたことに起因する
+#          バグ（企業自身の会計基準と無関係な値を誤って採用）を受けて導入。
+#          「cleansed/intermediateの分離は具体的な痛みが出てから」という2026-09-16の
+#          判断における「痛み」が具体化したケース。
 # mart   : 具体的な利用目的を持つ集計モデル（models/mart/）。external
 #          materialization で Parquet に書く（{MART_ROOT}/*.parquet）。
 #          2026-09-20、mart__edinet__financial_indicators（銘柄×期の主要財務指標）

@@ -4,8 +4,10 @@ models:
   - name: mart__edinet__financial_indicators
     description: >
       銘柄(edinet_code)×期(fiscal_year, period_type)ごとの主要財務指標（案B、毎回フル
-      rebuild、Parquet）。cleansed__edinet__report_periods と cleansed__edinet__facts
-      を doc_id で結合して構築する。J-GAAP/IFRS/US GAAPはcoalesce()で1列に統合。
+      rebuild、Parquet）。cleansed__edinet__report_periods と、会計基準別に指標を
+      抽出したintermediateモデル3種（intermediate__edinet__{jgaap,ifrs,usgaap}_
+      financial_facts）を doc_id で結合して構築する。企業自身のaccounting_standardを
+      優先しつつcoalesce()で1列に統合する（2026-09-21、intermediate層導入）。
     columns:
       - name: doc_id
         description: "根拠となった書類のID（同一期に複数提出があれば submit_date_time 最新の1件）。"
