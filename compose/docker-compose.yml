@@ -20,6 +20,7 @@ services:
       DUCKDB_PATH: /data/finance_dwh.duckdb
       LANDING_ROOT: /data/landing
       CLEANSED_ROOT: /data/cleansed
+      INTERMEDIATE_ROOT: /data/intermediate
       MART_ROOT: /data/mart
       LAKE_ROOT: /lake
       LANDING_LOOKBACK_DAYS: "${LANDING_LOOKBACK_DAYS:-7}"

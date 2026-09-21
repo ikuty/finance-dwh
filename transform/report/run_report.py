@@ -25,10 +25,11 @@ import duckdb
 JST = datetime.timezone(datetime.timedelta(hours=9), name="JST")
 
 CLEANSED_ROOT = os.environ.get("CLEANSED_ROOT", "/data/cleansed")
+INTERMEDIATE_ROOT = os.environ.get("INTERMEDIATE_ROOT", "/data/intermediate")
 MART_ROOT = os.environ.get("MART_ROOT", "/data/mart")
 
 # 行数を出す Parquet ファイル（表示順）。存在しなければ件数欄は "-"。
-# schema("cleansed"/"mart")でParquetの置き場所(cleansed_root/mart_root)を切り替える。
+# schema("cleansed"/"intermediate"/"mart")でParquetの置き場所を切り替える。
 COUNTED_RELATIONS: list[tuple[str, str]] = [
     ("cleansed", "edinet_documents"),
     ("cleansed", "edinet_facts"),
@@ -38,6 +39,10 @@ COUNTED_RELATIONS: list[tuple[str, str]] = [
     ("cleansed", "mufg_stock_splits"),
     ("cleansed", "mufg_stock_consolidations"),
     ("cleansed", "mufg_company_name_changes"),
+    ("intermediate", "dei_facts"),
+    ("intermediate", "jgaap_financial_facts"),
+    ("intermediate", "ifrs_financial_facts"),
+    ("intermediate", "usgaap_financial_facts"),
     ("mart", "edinet_financial_indicators"),
 ]
 
@@ -96,8 +101,8 @@ def _scalar_pair(con: DbConn, sql: str) -> tuple[str | None, int | None]:
     return (first, _as_int(row[1]))
 
 
-def collect_report_data(con: DbConn, cleansed_root: Path, mart_root: Path) -> ReportData:
-    roots = {"cleansed": cleansed_root, "mart": mart_root}
+def collect_report_data(con: DbConn, cleansed_root: Path, mart_root: Path, intermediate_root: Path) -> ReportData:
+    roots = {"cleansed": cleansed_root, "mart": mart_root, "intermediate": intermediate_root}
     layer_counts = [
         (schema, name, _count(con, roots[schema] / f"{name}.parquet")) for schema, name in COUNTED_RELATIONS
     ]
@@ -229,14 +234,19 @@ def summary_text(data: ReportData, dbt: DbtOutcome) -> str:
 
 
 def generate_report(
-    dbt: DbtOutcome, *, cleansed_root: str | None = None, mart_root: str | None = None
+    dbt: DbtOutcome,
+    *,
+    cleansed_root: str | None = None,
+    mart_root: str | None = None,
+    intermediate_root: str | None = None,
 ) -> tuple[str, str]:
     """レポート HTML と Slack 用の短いサマリ文字列を返す。"""
     root = Path(cleansed_root or CLEANSED_ROOT)
     mroot = Path(mart_root or MART_ROOT)
+    iroot = Path(intermediate_root or INTERMEDIATE_ROOT)
     con = duckdb.connect()
     try:
-        data = collect_report_data(con, root, mroot)
+        data = collect_report_data(con, root, mroot, iroot)
     finally:
         con.close()
     return render_html(data, dbt), summary_text(data, dbt)
