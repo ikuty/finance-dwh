@@ -15,7 +15,14 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth未指定(既定1)だと、gitleaks-actionがpush前後のコミット範囲を
+      # git logでスキャンする際に「push前」のコミットが浅いcloneに含まれておらず
+      # unknown revisionで失敗する(2026-09-22実機判明。短時間に連続してmainへ
+      # merge commitをpushした際に顕在化)。個人プロジェクトの規模のため全履歴
+      # 取得(fetch-depth: 0)で問題ない。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

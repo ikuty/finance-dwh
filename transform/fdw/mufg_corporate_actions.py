@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 
 
 def _table_rows(html: str) -> list[list[str]]:
@@ -31,7 +32,7 @@ def _table_rows(html: str) -> list[list[str]]:
     soup = BeautifulSoup(html, "html.parser")
     main = soup.find("main")
     table = main.find("table") if main is not None else soup.find("table")
-    if table is None:
+    if not isinstance(table, Tag):
         return []
 
     trs = table.find_all("tr")
