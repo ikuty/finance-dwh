@@ -1,4 +1,4 @@
--- 書類(doc_id)単位のIFRS経営指標等（14指標）。IFRS名のitem_nameのみを対象とし、
+-- 書類(doc_id)単位のIFRS経営指標等（18指標）。IFRS名のitem_nameのみを対象とし、
 -- J-GAAP/US GAAPの項目とは一切混在させない。設計・連結/個別の扱いは
 -- intermediate__edinet__jgaap_financial_factsと同じ（詳細はそちらのコメント参照）。
 --
@@ -8,6 +8,11 @@
 -- 通貨単位の判定(2026-09-22判明): 一部企業(三井海洋開発(6269)等)はIFRSタグを
 -- USD建てで開示するため、金額系指標はunit_id='JPY'（1株当たり指標はJPYPerShares）
 -- を必須条件とする。詳細はintermediate__edinet__jgaap_financial_factsのコメント参照。
+--
+-- 2026-09-25追加(4指標): shares_outstanding/diluted_eps/comprehensive_income/
+-- cash_and_equivalents。comprehensive_incomeはnet_incomeと同じく「親会社の所有者に
+-- 帰属」版を優先し、無ければ総額版にフォールバックする(IFRS税引前利益等と同じ命名
+-- パターン)。詳細はintermediate__edinet__jgaap_financial_factsのコメント参照。
 
 {{ config(
     materialized='external',
@@ -37,7 +42,11 @@ relevant_facts as (
         '株価収益率（IFRS）、経営指標等',
         '営業活動によるキャッシュ・フロー（IFRS）、経営指標等',
         '投資活動によるキャッシュ・フロー（IFRS）、経営指標等',
-        '財務活動によるキャッシュ・フロー（IFRS）、経営指標等'
+        '財務活動によるキャッシュ・フロー（IFRS）、経営指標等',
+        '発行済株式総数（普通株式）、経営指標等',
+        '希薄化後１株当たり利益又は損失（△）（IFRS）、経営指標等',
+        '当期包括利益：親会社の所有者に帰属（IFRS）、経営指標等', '当期包括利益（IFRS）、経営指標等',
+        '現金及び現金同等物（IFRS）、経営指標等'
     )
 ),
 
@@ -140,6 +149,34 @@ select
         end
     ) as financing_cf,
     cast(null as decimal(38, 4)) as capital,
-    cast(null as decimal(38, 4)) as payout_ratio
+    cast(null as decimal(38, 4)) as payout_ratio,
+    coalesce(
+        max(case when item_name = '発行済株式総数（普通株式）、経営指標等' and not is_non_consolidated and unit_id = 'shares' then value_num end),
+        case when not bool_or(has_consolidated) then
+            max(case when item_name = '発行済株式総数（普通株式）、経営指標等' and is_non_consolidated and unit_id = 'shares' then value_num end)
+        end
+    ) as shares_outstanding,
+    coalesce(
+        max(case when item_name = '希薄化後１株当たり利益又は損失（△）（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' then value_num end),
+        case when not bool_or(has_consolidated) then
+            max(case when item_name = '希薄化後１株当たり利益又は損失（△）（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' then value_num end)
+        end
+    ) as diluted_eps,
+    coalesce(
+        max(case when item_name = '当期包括利益：親会社の所有者に帰属（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
+        max(case when item_name = '当期包括利益（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
+        case when not bool_or(has_consolidated) then
+            coalesce(
+                max(case when item_name = '当期包括利益：親会社の所有者に帰属（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end),
+                max(case when item_name = '当期包括利益（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end)
+            )
+        end
+    ) as comprehensive_income,
+    coalesce(
+        max(case when item_name = '現金及び現金同等物（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
+        case when not bool_or(has_consolidated) then
+            max(case when item_name = '現金及び現金同等物（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end)
+        end
+    ) as cash_and_equivalents
 from with_dei
 group by doc_id
