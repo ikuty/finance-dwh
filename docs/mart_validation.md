@@ -1,5 +1,14 @@
 # mart層の値の妥当性検証（2026-09-21〜）
 
+## 2026-09-25: 指標追加（shares_outstanding/diluted_eps/comprehensive_income/cash_and_equivalents）
+
+`cleansed__edinet__facts`の全item_name（5,771種類）を棚卸しし、「経営指標等」
+カテゴリ（73種類、既存14指標と同じ5期比較表の構造）のうち未使用の項目から、書類数
+カバレッジが高い4項目を追加した。特に`shares_outstanding`（発行済株式総数）は、
+以前「今後の拡張候補」に記載していた`eps`/`bps`の再計算検証テストを可能にするために
+追加した。各intermediateモデル・martの変更内容は共通のコメント規約に従い各モデル
+ファイル冒頭に記載。
+
 ## 背景
 
 `mart__edinet__financial_indicators`の実装後、実データを確認する過程で複数のバグが
@@ -45,13 +54,17 @@
 | `sales` | ✓ `..._sales_monotonic_ytd` | - | - | |
 | `ordinary_income` | | | | 未カバー（損失計上四半期がありうるため単調性は不成立） |
 | `net_income` | | | | 未カバー（同上） |
-| `eps` | | | | 未カバー（発行済株式数を保持していないため再計算不可） |
-| `bps` | | | | 未カバー（同上） |
+| `eps` | | | ✓(warn) `..._eps_recomputed` | 期中加重平均株式数と期末発行済株式数の差により構造的に乖離しうる、誤差許容(相対20%) |
+| `bps` | | | ✓(warn) `..._bps_recomputed` | 自己株式の扱いの差により乖離しうる、誤差許容(相対20%) |
 | `roe` | - | - | ✓(warn) `..._roe_recomputed` | 期末値ベースの簡易再計算、誤差許容(5pt) |
 | `per` | | | | 未カバー（株価データを保持していないため再計算不可） |
 | `operating_cf`/`investing_cf`/`financing_cf` | | | | 未カバー（損益同様、単調性は不成立） |
 | `capital` | | | | 未カバー（通常期中不変、増減時のみ意味を持つ） |
 | `payout_ratio` | | | | 未カバー |
+| `shares_outstanding` | | | | 未カバー（eps/bps再計算の分母として利用、単体の検証観点なし） |
+| `diluted_eps` | | ✓(warn) `..._diluted_eps_lte_eps` | | `eps>0`の場合のみ、`diluted_eps <= eps`（希薄化効果） |
+| `comprehensive_income` | | | | 未カバー（net_incomeとの単純な近似関係が立てられないため） |
+| `cash_and_equivalents` | | ✓ `..._cash_lte_total_assets` | | `cash_and_equivalents <= total_assets` |
 
 ## 実装済みテスト
 
@@ -63,6 +76,14 @@
   （severity=warn）
 - `dbt/tests/assert_mart__edinet__financial_indicators_roe_recomputed.sql`
   （severity=warn）
+- `dbt/tests/assert_mart__edinet__financial_indicators_cash_lte_total_assets.sql`
+  （severity=error、2026-09-25追加）
+- `dbt/tests/assert_mart__edinet__financial_indicators_diluted_eps_lte_eps.sql`
+  （severity=warn、2026-09-25追加）
+- `dbt/tests/assert_mart__edinet__financial_indicators_bps_recomputed.sql`
+  （severity=warn、2026-09-25追加）
+- `dbt/tests/assert_mart__edinet__financial_indicators_eps_recomputed.sql`
+  （severity=warn、2026-09-25追加）
 
 severity=warnのテストはbuildを失敗させない（目視確認用、閾値超過を検知したら実データで
 個別に調査する）。severity=errorのテストは、成立しなければ確実に何らかの選択ミスが
@@ -97,8 +118,9 @@ intermediate層導入（会計基準ごとのモデル分離）により、`sale
 
 ## 今後の拡張候補
 
-- `eps`/`bps`/`per`の再計算検証には発行済株式数（経営指標等の`発行済株式総数`項目）を
-  martに追加すれば、`bps ≈ net_assets / 発行済株式数`等の整合性チェックが可能になる。
+- `per`の再計算検証には株価データが必要（当システムはJPX相場データを別マートで保持して
+  いるが、`mart__edinet__financial_indicators`とは未結合）。結合すれば
+  `per ≈ 株価 / eps`等の整合性チェックが可能になる。
 - `capital`（資本金）は通常期中不変のため、同一edinet_codeの連続する期で大きく変動して
   いないかのチェックは追加できる余地がある（増資等の正当な変動は許容する必要がある）。
 - **intermediate層単体でのテスト**: 現在の4テストはmart（会計基準統合後の最終出力）に

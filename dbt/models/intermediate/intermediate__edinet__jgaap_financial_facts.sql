@@ -1,4 +1,4 @@
--- 書類(doc_id)単位のJ-GAAP経営指標等（14指標）。J-GAAP名のitem_nameのみを対象とし、
+-- 書類(doc_id)単位のJ-GAAP経営指標等（18指標）。J-GAAP名のitem_nameのみを対象とし、
 -- IFRS/US GAAPの項目とは一切混在させない（2026-09-21、会計基準をまたいだcoalesceが
 -- 引き起こしたバグ（企業自身の会計基準と無関係な値を誤って採用）を受けて、
 -- mart__edinet__financial_indicatorsから分離）。
@@ -24,6 +24,14 @@
 --   外貨建ての値は個別/連結と同様にフォールバック対象外とする(無ければNULL、
 --   他の会計基準側でJPY建ての値が見つかればそちらが採用される設計、mart側参照)。
 --   比率系(equity_ratio/roe/per/payout_ratio)は無単位(pure)のためこの条件は不要。
+--
+-- 2026-09-25追加(4指標): shares_outstanding(発行済株式総数)/diluted_eps(潜在株式調整後
+-- EPS)/comprehensive_income(包括利益)/cash_and_equivalents(現金及び現金同等物残高)。
+-- shares_outstandingは会計基準に依存しない項目(unit_id='shares')のため、item_name自体は
+-- J-GAAP/IFRS/US GAAPの3モデル共通で同一だが、連結/個別の扱いは他指標と同じフォールバック
+-- 構造を適用する(経営指標等表の中で連結会社・提出会社単体の両方に同じitem_nameが現れる
+-- ため)。comprehensive_incomeはnet_incomeとの間に単純な近似関係が立てられない(その他の
+-- 包括利益の増減が不明なため)ため、mart側に専用の整合性テストは設けない。
 
 {{ config(
     materialized='external',
@@ -58,7 +66,11 @@ relevant_facts as (
         '投資活動によるキャッシュ・フロー、経営指標等',
         '財務活動によるキャッシュ・フロー、経営指標等',
         '資本金、経営指標等',
-        '配当性向、経営指標等'
+        '配当性向、経営指標等',
+        '発行済株式総数（普通株式）、経営指標等',
+        '潜在株式調整後１株当たり当期純利益、経営指標等',
+        '包括利益、経営指標等',
+        '現金及び現金同等物の残高、経営指標等'
     )
 ),
 
@@ -186,6 +198,30 @@ select
         case when not bool_or(has_consolidated) then
             max(case when item_name = '配当性向、経営指標等' and is_non_consolidated then value_num end)
         end
-    ) as payout_ratio
+    ) as payout_ratio,
+    coalesce(
+        max(case when item_name = '発行済株式総数（普通株式）、経営指標等' and not is_non_consolidated and unit_id = 'shares' then value_num end),
+        case when not bool_or(has_consolidated) then
+            max(case when item_name = '発行済株式総数（普通株式）、経営指標等' and is_non_consolidated and unit_id = 'shares' then value_num end)
+        end
+    ) as shares_outstanding,
+    coalesce(
+        max(case when item_name = '潜在株式調整後１株当たり当期純利益、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' then value_num end),
+        case when not bool_or(has_consolidated) then
+            max(case when item_name = '潜在株式調整後１株当たり当期純利益、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' then value_num end)
+        end
+    ) as diluted_eps,
+    coalesce(
+        max(case when item_name = '包括利益、経営指標等' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
+        case when not bool_or(has_consolidated) then
+            max(case when item_name = '包括利益、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end)
+        end
+    ) as comprehensive_income,
+    coalesce(
+        max(case when item_name = '現金及び現金同等物の残高、経営指標等' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
+        case when not bool_or(has_consolidated) then
+            max(case when item_name = '現金及び現金同等物の残高、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end)
+        end
+    ) as cash_and_equivalents
 from with_dei
 group by doc_id
