@@ -65,3 +65,11 @@ models:
         description: "資本金。IFRS/US GAAPに対応項目が無いためそれらの会計基準ではNULL。"
       - name: payout_ratio
         description: "配当性向。IFRS/US GAAPに対応項目が無いためそれらの会計基準ではNULL。"
+      - name: shares_outstanding
+        description: "発行済株式総数（普通株式）。会計基準に依存しない項目（単位: shares）。"
+      - name: diluted_eps
+        description: "潜在株式調整後1株当たり当期純利益（希薄化後EPS）。"
+      - name: comprehensive_income
+        description: "包括利益。IFRS/US GAAPは親会社所有者/株主に帰属する分を優先し、無ければ総額にフォールバック。"
+      - name: cash_and_equivalents
+        description: "現金及び現金同等物の残高。"

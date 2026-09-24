@@ -72,7 +72,11 @@ combined as (
         jg.investing_cf as jg_investing_cf, ifrs.investing_cf as ifrs_investing_cf, us.investing_cf as us_investing_cf,
         jg.financing_cf as jg_financing_cf, ifrs.financing_cf as ifrs_financing_cf, us.financing_cf as us_financing_cf,
         jg.capital as jg_capital, ifrs.capital as ifrs_capital, us.capital as us_capital,
-        jg.payout_ratio as jg_payout_ratio, ifrs.payout_ratio as ifrs_payout_ratio, us.payout_ratio as us_payout_ratio
+        jg.payout_ratio as jg_payout_ratio, ifrs.payout_ratio as ifrs_payout_ratio, us.payout_ratio as us_payout_ratio,
+        jg.shares_outstanding as jg_shares_outstanding, ifrs.shares_outstanding as ifrs_shares_outstanding, us.shares_outstanding as us_shares_outstanding,
+        jg.diluted_eps as jg_diluted_eps, ifrs.diluted_eps as ifrs_diluted_eps, us.diluted_eps as us_diluted_eps,
+        jg.comprehensive_income as jg_comprehensive_income, ifrs.comprehensive_income as ifrs_comprehensive_income, us.comprehensive_income as us_comprehensive_income,
+        jg.cash_and_equivalents as jg_cash_and_equivalents, ifrs.cash_and_equivalents as ifrs_cash_and_equivalents, us.cash_and_equivalents as us_cash_and_equivalents
     from target_periods tp
     left join dei d on d.doc_id = tp.doc_id
     left join {{ ref('intermediate__edinet__jgaap_financial_facts') }} jg on jg.doc_id = tp.doc_id
@@ -181,5 +185,29 @@ select
         case when accounting_standard = 'Japan GAAP' then jg_payout_ratio end,
         case when accounting_standard = 'US GAAP' then us_payout_ratio end,
         ifrs_payout_ratio, jg_payout_ratio, us_payout_ratio
-    ) as payout_ratio
+    ) as payout_ratio,
+    coalesce(
+        case when accounting_standard = 'IFRS' then ifrs_shares_outstanding end,
+        case when accounting_standard = 'Japan GAAP' then jg_shares_outstanding end,
+        case when accounting_standard = 'US GAAP' then us_shares_outstanding end,
+        ifrs_shares_outstanding, jg_shares_outstanding, us_shares_outstanding
+    ) as shares_outstanding,
+    coalesce(
+        case when accounting_standard = 'IFRS' then ifrs_diluted_eps end,
+        case when accounting_standard = 'Japan GAAP' then jg_diluted_eps end,
+        case when accounting_standard = 'US GAAP' then us_diluted_eps end,
+        ifrs_diluted_eps, jg_diluted_eps, us_diluted_eps
+    ) as diluted_eps,
+    coalesce(
+        case when accounting_standard = 'IFRS' then ifrs_comprehensive_income end,
+        case when accounting_standard = 'Japan GAAP' then jg_comprehensive_income end,
+        case when accounting_standard = 'US GAAP' then us_comprehensive_income end,
+        ifrs_comprehensive_income, jg_comprehensive_income, us_comprehensive_income
+    ) as comprehensive_income,
+    coalesce(
+        case when accounting_standard = 'IFRS' then ifrs_cash_and_equivalents end,
+        case when accounting_standard = 'Japan GAAP' then jg_cash_and_equivalents end,
+        case when accounting_standard = 'US GAAP' then us_cash_and_equivalents end,
+        ifrs_cash_and_equivalents, jg_cash_and_equivalents, us_cash_and_equivalents
+    ) as cash_and_equivalents
 from combined
