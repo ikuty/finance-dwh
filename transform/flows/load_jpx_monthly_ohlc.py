@@ -117,6 +117,17 @@ def load_one_month(lake_root: Path, landing_root: Path, month: str) -> dict[str,
     # jpx_monthly_ohlc_facts.pyのモジュールdocstring参照)。
     words = jpx_stq_pdf.iter_words(_pdf_path(lake_root, month))
     records = jpx_monthly_ohlc_facts.build_records(words)
+    if not records:
+        # JPXは営業日ごとに必ず取引があるため0件は正常なケースが無い。ヘッダー
+        # 検出失敗等でbuild_recordsが静かに0件を返すケースが実機で発生した
+        # (2022年3,4,5,6,9月、詳細はjpx_monthly_ohlc_facts.pyの
+        # _merged_header_date_code_boundary参照)。ここで例外を投げて処理を
+        # 止めることで、後続の「取り込み済み」マーカー書き込みをスキップし、
+        # 失敗が握りつぶされずに次回実行時も未取り込みのまま残るようにする。
+        raise ValueError(
+            f"jpx_monthly_ohlc: {month}のPDFから1件もレコードを抽出できなかった"
+            "（ヘッダー検出失敗等の可能性）。取り込み済みマーカーは書き込まない。"
+        )
 
     by_date: dict[str, list[jpx_monthly_ohlc_facts.FactRow]] = defaultdict(list)
     for r in records:
