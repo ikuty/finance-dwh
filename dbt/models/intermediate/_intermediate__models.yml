@@ -12,6 +12,8 @@ models:
         description: "会計基準（Japan GAAP/IFRS/US GAAP等）。DEI「会計基準、DEI」由来。"
       - name: has_consolidated
         description: "連結決算の有無。DEI「連結決算の有無、DEI」由来。"
+      - name: shares_outstanding
+        description: "発行済株式総数（普通株式）。「株式の総数等」開示セクション由来（会計基準・連結スコープに依存しない）。"
 
   - name: intermediate__edinet__jgaap_financial_facts
     description: >
