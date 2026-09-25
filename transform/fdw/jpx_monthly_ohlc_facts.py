@@ -95,6 +95,24 @@ class _HeaderLayout:
     ohlc_bounds: list[float]  # 8列分の右端境界(昇順、最後はinf)
 
 
+def _merged_header_date_code_boundary(row_words: list[Word]) -> float | None:
+    """日付・コード・銘柄名ラベルの間に空白が無く1単語へ連結されている場合
+    (2022年3,4,5,6,9月のPDFで実機確認: 例'約定年月日銘柄コード銘柄名称'という
+    1トークン)のフォールバック。文字数比率でdate_code_boundaryを近似する
+    （実測値で、日付部分の文字数比率から求めた境界が実際のデータ行の
+    日付列・コード列の間隙に収まることを確認済み）。"""
+    for date_label in _DATE_LABELS:
+        for code_label in _CODE_LABELS:
+            for name_label in _NAME_LABELS:
+                combined = date_label + code_label + name_label
+                w = next((w for w in row_words if w.text == combined), None)
+                if w is None:
+                    continue
+                frac = len(date_label) / len(combined)
+                return w.x0 + (w.x1 - w.x0) * frac
+    return None
+
+
 def _detect_header(row_words: list[Word]) -> _HeaderLayout | None:
     by_text: dict[str, Word] = {}
     for w in row_words:
@@ -102,8 +120,13 @@ def _detect_header(row_words: list[Word]) -> _HeaderLayout | None:
 
     date_w = next((by_text[t] for t in _DATE_LABELS if t in by_text), None)
     code_w = next((by_text[t] for t in _CODE_LABELS if t in by_text), None)
-    if date_w is None or code_w is None:
-        return None
+    if date_w is not None and code_w is not None:
+        date_code_boundary = (date_w.x0 + code_w.x0) / 2
+    else:
+        merged_boundary = _merged_header_date_code_boundary(row_words)
+        if merged_boundary is None:
+            return None
+        date_code_boundary = merged_boundary
     ohlc_words = [by_text.get(label) for label in _OHLC_LABELS_ORDER]
     if any(w is None for w in ohlc_words):
         return None
@@ -117,7 +140,7 @@ def _detect_header(row_words: list[Word]) -> _HeaderLayout | None:
     first_ohlc_word = ohlc_words[0]
     assert first_ohlc_word is not None
     return _HeaderLayout(
-        date_code_boundary=(date_w.x0 + code_w.x0) / 2,
+        date_code_boundary=date_code_boundary,
         name_area_end=first_ohlc_word.x0,
         ohlc_bounds=bounds,
     )
