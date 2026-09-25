@@ -66,7 +66,7 @@ models:
       - name: payout_ratio
         description: "配当性向。IFRS/US GAAPに対応項目が無いためそれらの会計基準ではNULL。"
       - name: shares_outstanding
-        description: "発行済株式総数（普通株式）。会計基準に依存しない項目（単位: shares）。"
+        description: "発行済株式総数（普通株式）。「株式の総数等」開示由来(dei_facts)を優先し、無ければ経営指標等ベースの会計基準別coalesceにフォールバック。会計基準に依存しない項目（単位: shares）。"
       - name: diluted_eps
         description: "潜在株式調整後1株当たり当期純利益（希薄化後EPS）。"
       - name: comprehensive_income
