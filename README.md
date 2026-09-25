@@ -57,7 +57,8 @@ transform/     Dockerfile / fdw/（EDINET CSV 抽出等）/ flows/（Prefect フ
 dbt/           dbt プロジェクト（dbt-duckdb、raw/cleansed/intermediate/mart モデル・seeds・tests）
 systemd/       Mac Mini 用 unit テンプレート（transform.service/.timer の2本）
 .github/workflows/  ci / build-push / deploy / gitleaks
-docs/          architecture / raw_landing_design / deployment_design / mart_validation
+docs/          architecture / raw_landing_design / deployment_design / mart_validation /
+               mart_indicators
 CLAUDE.md      固有の設計判断
 ```
 
@@ -148,4 +149,4 @@ MIT License（`LICENSE`参照）
 ## 参照
 
 詳細な設計は `docs/`（`architecture.md` / `raw_landing_design.md` / `deployment_design.md` /
-`mart_validation.md`）と `CLAUDE.md` を参照。
+`mart_validation.md` / `mart_indicators.md`）と `CLAUDE.md` を参照。
