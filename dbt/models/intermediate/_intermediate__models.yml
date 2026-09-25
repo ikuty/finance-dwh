@@ -30,6 +30,39 @@ models:
       - name: source_model
         description: "どちらのcleansedモデル由来か（stq_prices/daily_ohlc）。"
 
+  - name: intermediate__mufg__corporate_actions
+    description: >
+      cleansed__mufg__stock_splits/stock_consolidationsを統合した、銘柄×権利落ち日
+      単位のコーポレートアクション・イベント（毎回フル rebuild、Parquet）。
+      J-Quantsの調整係数算出方式に倣う。権利落ち日は権利付最終日の翌営業日
+      （intermediate__jpx__daily_pricesの実際の取引日から検索して算出）。
+    columns:
+      - name: code
+        data_tests: [not_null]
+      - name: ex_rights_date
+        description: "権利落ち日（権利付最終日の翌営業日）。"
+        data_tests: [not_null]
+      - name: adj_factor
+        description: "調整係数（ratio_before/ratio_after、分割・併合とも統一的に算出）。"
+        data_tests: [not_null]
+      - name: action_type
+        description: "stock_split/stock_consolidationのいずれか。"
+
+  - name: intermediate__jpx__daily_prices_adjusted
+    description: >
+      intermediate__jpx__daily_pricesに、株式分割・併合の累積調整係数
+      （J-Quants方式）を付与した株価（毎回フル rebuild、Parquet）。生値の全列に
+      加え、cumulative_adjustment_factorと調整後OHLC/VWAP/出来高（_adjサフィックス）
+      を持つ。
+    columns:
+      - name: code
+        data_tests: [not_null]
+      - name: file_date
+        data_tests: [not_null]
+      - name: cum_adjustment_factor
+        description: "累積調整係数。対象期間より後に分割・併合が無ければ1.0。"
+        data_tests: [not_null]
+
   - name: intermediate__edinet__jgaap_financial_facts
     description: >
       書類(doc_id)単位のJ-GAAP経営指標等（18指標、毎回フル rebuild、Parquet）。
