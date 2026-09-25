@@ -58,6 +58,7 @@ combined as (
         tp.*,
         d.accounting_standard,
         d.has_consolidated,
+        d.shares_outstanding as dei_shares_outstanding,
         jg.total_assets as jg_total_assets, ifrs.total_assets as ifrs_total_assets, us.total_assets as us_total_assets,
         jg.net_assets as jg_net_assets, ifrs.net_assets as ifrs_net_assets, us.net_assets as us_net_assets,
         jg.equity_ratio as jg_equity_ratio, ifrs.equity_ratio as ifrs_equity_ratio, us.equity_ratio as us_equity_ratio,
@@ -186,7 +187,12 @@ select
         case when accounting_standard = 'US GAAP' then us_payout_ratio end,
         ifrs_payout_ratio, jg_payout_ratio, us_payout_ratio
     ) as payout_ratio,
+    -- 「株式の総数等」開示由来のdei_shares_outstandingを優先する（2026-09-25変更、
+    -- カバレッジ77,666書類・経営指標等ベースの2.2倍。詳細はintermediate__edinet__
+    -- dei_factsのコメント参照）。無ければ経営指標等ベースの会計基準別coalesceに
+    -- フォールバックする（残り約1.9%の書類をカバー）。
     coalesce(
+        dei_shares_outstanding,
         case when accounting_standard = 'IFRS' then ifrs_shares_outstanding end,
         case when accounting_standard = 'Japan GAAP' then jg_shares_outstanding end,
         case when accounting_standard = 'US GAAP' then us_shares_outstanding end,
