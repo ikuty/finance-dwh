@@ -23,6 +23,13 @@
 -- 訂正報告書対応: report_periodsは書類(doc_id)粒度で訂正報告書も別行として保持する
 -- ため、同一(edinet_code, fiscal_year, period_type)にdoc_idが複数あり得る。
 -- submit_date_time最新の1件に絞ってから指標を結合する。
+--
+-- submit_date_time列(2026-09-25追加): 株価と組み合わせる際、決算期末日ではなく
+-- この開示日を基準にする必要がある(決算期末日を基準にすると、実際にはまだ
+-- 開示されていない数値を先読みして使う「先読みバイアス」が発生する。実データで
+-- 通期は約87〜90日、四半期でも約42〜43日のディスクロージャーラグを確認済み。
+-- 詳細はdocs/mart_indicators.md参照)。mart__jpx_edinet__daily_valuation_indicators
+-- が「その取引日時点で参照可能な最新の開示」を判定するために使用する。
 
 {{ config(
     materialized='external',
@@ -44,7 +51,7 @@ with periods as (
 target_periods as (
     select
         doc_id, edinet_code, sec_code, filer_name, fiscal_year, period_type,
-        period_start, period_end, regime
+        period_start, period_end, submit_date_time, regime
     from periods
     where _rn = 1
 ),
@@ -94,6 +101,7 @@ select
     period_type,
     period_start,
     period_end,
+    submit_date_time,
     regime,
     accounting_standard,
     has_consolidated,
