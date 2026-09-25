@@ -73,3 +73,44 @@ models:
         description: "包括利益。IFRS/US GAAPは親会社所有者/株主に帰属する分を優先し、無ければ総額にフォールバック。"
       - name: cash_and_equivalents
         description: "現金及び現金同等物の残高。"
+
+  - name: mart__jpx_edinet__valuation_indicators
+    description: >
+      銘柄(edinet_code)×期(fiscal_year, period_type)ごとの株価評価指標（毎回フル
+      rebuild、Parquet）。mart__edinet__financial_indicatorsとintermediate__jpx__
+      daily_pricesを結合。grainはmart__edinet__financial_indicatorsと同じ。
+    columns:
+      - name: doc_id
+        data_tests: [not_null, unique]
+      - name: edinet_code
+        data_tests: [not_null]
+      - name: sec_code
+        description: "銘柄コード（EDINET由来、5桁）。JPXとの結合キーは末尾1桁を除去して算出。"
+      - name: period_end_close_date
+        description: "決算期末日ベースの終値の実際の取引日（period_end以前で最大のfile_date）。"
+      - name: period_end_close
+        description: "決算期末日（直前営業日）の終値（raw、無調整）。"
+      - name: latest_close_date
+        description: "銘柄ごとの最新file_date。"
+      - name: latest_close
+        description: "直近営業日の終値（raw、無調整）。"
+      - name: per_disclosed
+        description: "企業自己申告のPER（mart__edinet__financial_indicators.per）。"
+      - name: pbr
+        description: "株価純資産倍率＝period_end_close / bps。"
+      - name: pbr_latest
+        description: "株価純資産倍率（直近営業日終値ベース）＝latest_close / bps。"
+      - name: per_computed
+        description: "実勢PER＝period_end_close / eps。per_disclosedとの突合検証あり。"
+      - name: per_computed_latest
+        description: "実勢PER（直近営業日終値ベース）＝latest_close / eps。"
+      - name: market_cap
+        description: "時価総額（決算期末日終値ベース）＝period_end_close × shares_outstanding。"
+      - name: market_cap_latest
+        description: "時価総額（直近営業日終値ベース）。"
+      - name: psr
+        description: "株価売上高倍率＝market_cap / sales。"
+      - name: psr_latest
+        description: "株価売上高倍率（直近営業日終値ベース）。"
+      - name: earnings_yield
+        description: "株式益回り＝eps / period_end_close（PERの逆数）。"
