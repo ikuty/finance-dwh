@@ -1,4 +1,12 @@
 -- JPX形式B(株式相場表・月次簡易OHLC)の型付け版。
+--
+-- モデル名について(2026-09-25、cleansed__jpx__monthly_ohlcから改名):
+--   「月次」はソースPDFの配信単位(1ヶ月1ファイル)を指すだけで、データの粒度は
+--   銘柄×営業日(1行=1日)であり月次集計ではない。旧名がこの粒度を「月次」と
+--   誤解させる名前だったため、実態に合わせてdaily_ohlcに改名した(landing層の
+--   テーブル名・Prefectフロー名(load_jpx_monthly_ohlc等)は「月次配信PDFの取り込み」
+--   という意味で妥当なため変更していない。cleansed層のみの改名)。
+--
 -- landing.jpx_monthly_ohlc_facts(Parquet、月単位でPrefectのload_jpx_monthly_ohlc_facts
 -- タスクが日付ごとのパーティションへ分けて書く)を型付けするだけの external
 -- materialization。形式C・EDINETと同じ理由で常に全量rebuildする（対象規模が
@@ -12,7 +20,7 @@
 
 {{ config(
     materialized='external',
-    location=env_var('CLEANSED_ROOT', '/data/cleansed') ~ '/jpx_monthly_ohlc.parquet',
+    location=env_var('CLEANSED_ROOT', '/data/cleansed') ~ '/jpx_daily_ohlc.parquet',
     format='parquet'
 ) }}
 

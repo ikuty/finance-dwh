@@ -124,10 +124,12 @@ models:
           ファンド型銘柄の証券タイプ区分（内国投資信託受益証券・内国投資証券・
           外国投資証券・出資証券のいずれか）。普通株式の行ではNULL。
 
-  - name: cleansed__jpx__monthly_ohlc
+  - name: cleansed__jpx__daily_ohlc
     description: >
       JPX 形式B（株式相場表・月次簡易OHLC）の型付け版（毎回フル rebuild、Parquet）。
-      確定済み過去アーカイブ（2020-01〜）。
+      「月次簡易OHLC」はソースPDFの配信単位・形式Bの正式名称であり、データの粒度は
+      銘柄×営業日（1行=1日）。確定済み過去アーカイブ（2020-01〜、これ以降は
+      更新されない）。
     columns:
       - name: code
         data_tests: [not_null]

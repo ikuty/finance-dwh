@@ -70,7 +70,7 @@ CLAUDE.md      固有の設計判断
 | `cleansed__edinet__facts` | cleansed | EDINET CSV明細の型付け・名寄せ版（doc_id粒度、incremental） |
 | `cleansed__edinet__report_periods` | cleansed | 銘柄×期の期間ディメンション（旧制度/移行期/新制度の判定含む） |
 | `cleansed__jpx__stq_prices` | cleansed | JPX形式C（株式相場表・詳細日次）の型付け版 |
-| `cleansed__jpx__monthly_ohlc` | cleansed | JPX形式B（月次簡易OHLC）の型付け版 |
+| `cleansed__jpx__daily_ohlc` | cleansed | JPX形式B（月次簡易OHLC、データ粒度は銘柄×営業日）の型付け版 |
 | `cleansed__mufg__*` | cleansed | 商号変更・株式併合・株式分割の履歴 |
 | `intermediate__edinet__dei_facts` | intermediate | 書類単位のDEI（会計基準・連結決算の有無） |
 | `intermediate__edinet__jgaap_financial_facts` | intermediate | J-GAAP名項目のみで抽出した書類単位の14指標 |
