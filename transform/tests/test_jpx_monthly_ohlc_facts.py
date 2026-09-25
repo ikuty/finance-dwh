@@ -234,3 +234,51 @@ def test_build_records_spans_multiple_dates_and_pages() -> None:
         ("2023-01-04", "13010"),
         ("2023-01-05", "13320"),
     ]
+
+
+# --- AntennaHouse世代、ヘッダーラベルが1単語に連結される異常系(2022-03等) ----
+
+
+def header_merged_2022_03(page: int, top: float = 56.78) -> list[Word]:
+    """2022-03実測: 日付・コード・銘柄名ラベルの間に空白が無く1トークンへ
+    連結される(実機確認: 2022年3,4,5,6,9月のPDFで再現。他の月は正常に分離
+    される)。OHLC 8列のラベルは正常に分離されている。"""
+    words = [
+        Word(page=page, top=top, x0=51.7188, x1=130.44192, size=5.64, text="約定年月日銘柄コード銘柄名称"),
+    ]
+    labels = [
+        (278.3, 300.8, "前場始値"), (306.4, 328.9, "前場高値"), (334.4, 357.0, "前場安値"),
+        (362.5, 385.1, "前場終値"), (390.6, 413.2, "後場始値"), (418.7, 441.2, "後場高値"),
+        (446.8, 469.3, "後場安値"), (474.8, 497.4, "後場終値"),
+    ]
+    words += [Word(page=page, top=top, x0=x0, x1=x1, size=5.64, text=t) for x0, x1, t in labels]
+    return words
+
+
+def test_build_records_merged_header_label_is_detected() -> None:
+    """ヘッダーラベル連結時のフォールバック(_merged_header_date_code_boundary)が
+    実測データ(2022-03-01、1301極洋)を正しく構造化できることを検証する。
+    2022年3,4,5,6,9月分のlanding欠落（0件が取り込み済みとしてマーカーされて
+    いた）の根本原因の回帰テスト。"""
+    words = [
+        *header_merged_2022_03(1),
+        Word(page=1, top=66.0, x0=52.7, x1=77.7, size=5.64, text="20220301"),
+        Word(page=1, top=66.0, x0=90.1, x1=119.2, size=5.64, text="13010極洋"),
+        Word(page=1, top=66.0, x0=124.8, x1=147.4, size=5.64, text="普通株式"),
+        Word(page=1, top=66.0, x0=291.7, x1=304.2, size=5.64, text="3270"),
+        Word(page=1, top=66.0, x0=319.8, x1=332.3, size=5.64, text="3280"),
+        Word(page=1, top=66.0, x0=347.9, x1=360.4, size=5.64, text="3250"),
+        Word(page=1, top=66.0, x0=376.0, x1=388.5, size=5.64, text="3250"),
+        Word(page=1, top=66.0, x0=404.0, x1=416.5, size=5.64, text="3245"),
+        Word(page=1, top=66.0, x0=432.1, x1=444.6, size=5.64, text="3270"),
+        Word(page=1, top=66.0, x0=460.2, x1=472.7, size=5.64, text="3240"),
+        Word(page=1, top=66.0, x0=488.3, x1=500.8, size=5.64, text="3250"),
+    ]
+    records = m.build_records(words)
+    assert len(records) == 1
+    r = records[0]
+    assert r.file_date == "2022-03-01"
+    assert r.code == "13010"
+    assert r.name_ja == "極洋　普通株式"
+    assert (r.am_open, r.am_high, r.am_low, r.am_close) == ("3270", "3280", "3250", "3250")
+    assert (r.pm_open, r.pm_high, r.pm_low, r.pm_close) == ("3245", "3270", "3240", "3250")
