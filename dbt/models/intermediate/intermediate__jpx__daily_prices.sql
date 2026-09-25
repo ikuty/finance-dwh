@@ -7,7 +7,11 @@
 -- 対象を普通株式に限定する理由(2026-09-25、実データで確認):
 --   - cleansed__jpx__daily_ohlcのcodeは主に5桁（末尾0付き、例:'13010'）だが、
 --     900から始まる9桁のcodeも存在し、これは転換社債型新株予約権付社債（普通株式
---     ではない）だった。length(code)=5の行のみを対象とする。
+--     ではない）だった。さらに5桁でも末尾が0以外のcode（例:'94345'/'94346'、
+--     ソフトバンクの社債型種類株式）が別途存在し、これも普通株式ではない
+--     （実機で判明: length(code)=5だけでは不十分で、これらがsubstr(code,1,4)後に
+--     同じ4桁に正規化されて重複行を生んだ）。length(code)=5かつ末尾が'0'の行
+--     （普通株式）のみを対象とする。
 --   - cleansed__jpx__stq_pricesのcodeは主に4桁だが、一部5桁（末尾0以外、例:
 --     '25935'）が存在し、これは優先株だった。length(code)=4の行のみを対象とする。
 --   - 銘柄コードの表記ゆれ: daily_ohlcの5桁(末尾0)はstq_pricesの4桁に対応する
@@ -90,6 +94,7 @@ daily_ohlc as (
     from {{ ref('cleansed__jpx__daily_ohlc') }} d
     cross join stq_prices_min_date m
     where length(d.code) = 5
+      and right(d.code, 1) = '0'
       and d.file_date < m.min_date
 )
 
