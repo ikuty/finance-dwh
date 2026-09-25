@@ -63,7 +63,7 @@ actions as (
 trading_calendar as (
     select distinct file_date
     from {{ ref('intermediate__jpx__daily_prices') }}
-)
+),
 
 with_ex_rights_date as (
     select
