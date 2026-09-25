@@ -1,4 +1,4 @@
--- 書類(doc_id)単位のUS GAAP経営指標等（18指標）。US GAAP名のitem_nameのみを対象とし、
+-- 書類(doc_id)単位のUS GAAP経営指標等（19指標）。US GAAP名のitem_nameのみを対象とし、
 -- J-GAAP/IFRSの項目とは一切混在させない。設計・連結/個別の扱いは
 -- intermediate__edinet__jgaap_financial_factsと同じ（詳細はそちらのコメント参照）。
 -- 対象企業数は極めて少ない（実機確認: 10〜14社程度）。
@@ -45,7 +45,8 @@ relevant_facts as (
         '発行済株式総数（普通株式）、経営指標等',
         '希薄化後１株当たり当社株主に帰属する利益又は損失（△）（US GAAP）、経営指標等',
         '当社株主に帰属する包括利益（US GAAP）、経営指標等', '包括利益（US GAAP）、経営指標等',
-        '現金及び現金同等物（US GAAP）、経営指標等'
+        '現金及び現金同等物（US GAAP）、経営指標等',
+        '１株当たり配当額、経営指標等'
     )
 ),
 
@@ -172,6 +173,12 @@ select
         case when not bool_or(has_consolidated) then
             max(case when item_name = '現金及び現金同等物（US GAAP）、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end)
         end
-    ) as cash_and_equivalents
+    ) as cash_and_equivalents,
+    coalesce(
+        max(case when item_name = '１株当たり配当額、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' then value_num end),
+        case when not bool_or(has_consolidated) then
+            max(case when item_name = '１株当たり配当額、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' then value_num end)
+        end
+    ) as dividend_per_share
 from with_dei
 group by doc_id

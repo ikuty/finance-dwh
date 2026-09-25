@@ -1,4 +1,4 @@
--- 書類(doc_id)単位のJ-GAAP経営指標等（18指標）。J-GAAP名のitem_nameのみを対象とし、
+-- 書類(doc_id)単位のJ-GAAP経営指標等（19指標）。J-GAAP名のitem_nameのみを対象とし、
 -- IFRS/US GAAPの項目とは一切混在させない（2026-09-21、会計基準をまたいだcoalesceが
 -- 引き起こしたバグ（企業自身の会計基準と無関係な値を誤って採用）を受けて、
 -- mart__edinet__financial_indicatorsから分離）。
@@ -32,6 +32,11 @@
 -- 構造を適用する(経営指標等表の中で連結会社・提出会社単体の両方に同じitem_nameが現れる
 -- ため)。comprehensive_incomeはnet_incomeとの間に単純な近似関係が立てられない(その他の
 -- 包括利益の増減が不明なため)ため、mart側に専用の整合性テストは設けない。
+--
+-- 2026-09-25追加(dividend_per_share、1株当たり配当額): shares_outstandingと同様、
+-- IFRS/US GAAP専用のitem_nameが存在せず3モデル共通で同一のため、コメントの意味では
+-- 会計基準に依存しないが、経営指標等表内での連結/個別・当期判定はEPS等と同じ
+-- コンテキスト構造のため、この抽出パターンをそのまま踏襲する。
 
 {{ config(
     materialized='external',
@@ -70,7 +75,8 @@ relevant_facts as (
         '発行済株式総数（普通株式）、経営指標等',
         '潜在株式調整後１株当たり当期純利益、経営指標等',
         '包括利益、経営指標等',
-        '現金及び現金同等物の残高、経営指標等'
+        '現金及び現金同等物の残高、経営指標等',
+        '１株当たり配当額、経営指標等'
     )
 ),
 
@@ -222,6 +228,12 @@ select
         case when not bool_or(has_consolidated) then
             max(case when item_name = '現金及び現金同等物の残高、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end)
         end
-    ) as cash_and_equivalents
+    ) as cash_and_equivalents,
+    coalesce(
+        max(case when item_name = '１株当たり配当額、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' then value_num end),
+        case when not bool_or(has_consolidated) then
+            max(case when item_name = '１株当たり配当額、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' then value_num end)
+        end
+    ) as dividend_per_share
 from with_dei
 group by doc_id
