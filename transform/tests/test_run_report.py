@@ -67,14 +67,14 @@ def test_collect_report_data_counts_and_missing_file(tmp_path: Path) -> None:
     assert counts[("cleansed", "edinet_documents")] == 3
     assert counts[("cleansed", "edinet_facts")] is None
     assert counts[("cleansed", "jpx_stq_prices")] is None
-    assert counts[("cleansed", "jpx_monthly_ohlc")] is None
+    assert counts[("cleansed", "jpx_daily_ohlc")] is None
     assert counts[("intermediate", "dei_facts")] is None
     assert counts[("mart", "edinet_financial_indicators")] is None
     assert data.edinet_latest_date == "2026-09-10"
     assert data.edinet_company_count == 3
     assert data.jpx_latest_date is None
     assert data.jpx_code_count is None
-    assert data.jpx_monthly_code_count is None
+    assert data.jpx_daily_ohlc_code_count is None
 
 
 def test_collect_report_data_counts_jpx_when_present(tmp_path: Path) -> None:
@@ -99,9 +99,9 @@ def test_collect_report_data_counts_jpx_when_present(tmp_path: Path) -> None:
     assert data.jpx_code_count == 2
 
 
-def test_collect_report_data_counts_jpx_monthly_ohlc_when_present(tmp_path: Path) -> None:
+def test_collect_report_data_counts_jpx_daily_ohlc_when_present(tmp_path: Path) -> None:
     write_parquet(
-        tmp_path / "jpx_monthly_ohlc.parquet",
+        tmp_path / "jpx_daily_ohlc.parquet",
         [
             {"file_date": "2025-09-01", "code": "13010"},
             {"file_date": "2025-09-01", "code": "13320"},
@@ -116,8 +116,8 @@ def test_collect_report_data_counts_jpx_monthly_ohlc_when_present(tmp_path: Path
         con.close()
 
     counts = {(s, n): v for s, n, v in data.layer_counts}
-    assert counts[("cleansed", "jpx_monthly_ohlc")] == 3
-    assert data.jpx_monthly_code_count == 2
+    assert counts[("cleansed", "jpx_daily_ohlc")] == 3
+    assert data.jpx_daily_ohlc_code_count == 2
 
 
 def test_collect_report_data_counts_mart_from_mart_root(tmp_path: Path) -> None:
@@ -172,13 +172,13 @@ def _sample_data() -> ReportData:
             ("cleansed", "edinet_documents", 93),
             ("cleansed", "edinet_facts", 10470),
             ("cleansed", "jpx_stq_prices", 4444),
-            ("cleansed", "jpx_monthly_ohlc", 83195),
+            ("cleansed", "jpx_daily_ohlc", 83195),
         ],
         edinet_latest_date="2026-09-10",
         edinet_company_count=93,
         jpx_latest_date="2026-09-10",
         jpx_code_count=4444,
-        jpx_monthly_code_count=4423,
+        jpx_daily_ohlc_code_count=4423,
     )
 
 
@@ -189,7 +189,7 @@ def test_render_html_success_contains_counts_and_house_style() -> None:
     assert "10,470" in html
     assert "edinet_facts" in html
     assert "jpx_stq_prices" in html
-    assert "jpx_monthly_ohlc" in html
+    assert "jpx_daily_ohlc" in html
     assert "2026-09-10" in html
 
 
@@ -231,7 +231,7 @@ def test_generate_report_end_to_end(tmp_path: Path) -> None:
         [{"file_date": "2026-09-10", "code": "1301"}],
     )
     write_parquet(
-        tmp_path / "jpx_monthly_ohlc.parquet",
+        tmp_path / "jpx_daily_ohlc.parquet",
         [{"file_date": "2025-09-01", "code": "13010"}, {"file_date": "2025-09-01", "code": "13320"}],
     )
 
