@@ -15,6 +15,21 @@ models:
       - name: shares_outstanding
         description: "発行済株式総数（普通株式）。「株式の総数等」開示セクション由来（会計基準・連結スコープに依存しない）。"
 
+  - name: intermediate__jpx__daily_prices
+    description: >
+      普通株式の連続日次株価（毎回フル rebuild、Parquet）。cleansed__jpx__stq_prices
+      （2025-09〜、詳細日次）とcleansed__jpx__daily_ohlc（2020-01〜2025-09、簡易
+      日次）を銘柄コード正規化の上で結合。重複期間はstq_prices優先。列構成は
+      stq_prices優先で、daily_ohlc期間はNULL埋め。
+    columns:
+      - name: code
+        description: "銘柄コード（4桁、daily_ohlc由来行は5桁から正規化）。"
+        data_tests: [not_null]
+      - name: file_date
+        data_tests: [not_null]
+      - name: source_model
+        description: "どちらのcleansedモデル由来か（stq_prices/daily_ohlc）。"
+
   - name: intermediate__edinet__jgaap_financial_facts
     description: >
       書類(doc_id)単位のJ-GAAP経営指標等（18指標、毎回フル rebuild、Parquet）。
