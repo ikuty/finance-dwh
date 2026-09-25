@@ -50,13 +50,17 @@ models:
       - name: sales
         description: "売上高（業種により営業収益・経常収益等の代替項目を含む）。"
       - name: eps
-        description: "1株当たり当期純利益。"
+        description: "1株当たり当期純利益（実績、EDINET開示の確定値。会社予想値ではない）。"
       - name: bps
         description: "1株当たり純資産額。"
       - name: roe
         description: "自己資本利益率。"
       - name: per
-        description: "株価収益率。"
+        description: >
+          株価収益率（企業自己申告、経営指標等由来）。実績EPSベースであり、
+          かぶたん・Yahoo!ファイナンス等がデフォルト表示する「予想PER」（会社発表の
+          進行期業績予想EPSを使用）とは異なる点に注意（詳細はdocs/mart_indicators.md
+          参照）。
       - name: operating_cf
         description: "営業活動によるキャッシュ・フロー。"
       - name: investing_cf
@@ -106,10 +110,15 @@ models:
       - name: pbr
         description: "株価純資産倍率＝close / bps_adjusted。"
       - name: per
-        description: "実勢PER＝close / eps_adjusted。"
+        description: >
+          実勢PER＝close / eps_adjusted。実績EPSベース（EDINET開示の確定値）。
+          かぶたん・Yahoo!ファイナンス等がデフォルト表示する「予想PER」（会社発表の
+          進行期業績予想EPSを使用）とは異なる点に注意。実データ検証（2026-09-25、
+          3087）ではみんかぶの実績PER表示と一致した。予想EPSはEDINET開示に含まれず
+          未対応。
       - name: market_cap
         description: "時価総額＝close × shares_outstanding_adjusted。"
       - name: psr
         description: "株価売上高倍率＝market_cap / sales。"
       - name: earnings_yield
-        description: "株式益回り＝eps_adjusted / close（PERの逆数）。"
+        description: "株式益回り＝eps_adjusted / close（PERの逆数）。perと同じく実績EPSベース。"
