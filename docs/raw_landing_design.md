@@ -386,8 +386,11 @@ file_month=YYYY-MM/part.parquet`）で行う。dbt sourceのglob
 4世代とも重複0件・OHLC整合性違反0件。動的ヘッダー検出方式が両世代・
 世代内の座標変動を正しく吸収できることを確認した。
 
-dbtの singular テスト（`assert_cleansed__jpx__monthly_ohlc_deduplicated.sql` /
-`_ohlc_consistency.sql`）として本実装に組み込み済み。VWAPが無いため
+dbtの singular テスト（`assert_cleansed__jpx__daily_ohlc_deduplicated.sql` /
+`_ohlc_consistency.sql`）として本実装に組み込み済み（cleansed層のモデル名は
+2026-09-25に`cleansed__jpx__monthly_ohlc`から`cleansed__jpx__daily_ohlc`へ改名した。
+「月次」はソースPDFの配信単位を指すだけで、データ粒度は銘柄×営業日であるため）。
+VWAPが無いため
 形式Cにあった再計算チェックは適用しない。
 
 ## 既知の論点・残作業

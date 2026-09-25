@@ -27,7 +27,7 @@ git 履歴（`afc45c7`〜`5ea9b52`）に残る。
 |---|---|---|
 | raw | DuckDB の view モデル（doc index）。レイクを直接 glob 読み | **doc index のみ**（JPX のファイル目録は未実装） |
 | landing | Parquet（`{DATA_DIR}/landing/{table}/file_date=*/part.parquet`）。Prefect の `load_edinet` / `load_jpx_stq` / `load_jpx_monthly_ohlc` が日付単位で書く | **edinet_csv_facts / jpx_stq_words / jpx_stq_facts / jpx_monthly_ohlc_facts** |
-| cleansed | dbt-duckdb の external materialization（Parquet）。型付け・名寄せ、毎回 rebuild | **edinet__documents / edinet__facts / jpx__stq_prices / jpx__monthly_ohlc** |
+| cleansed | dbt-duckdb の external materialization（Parquet）。型付け・名寄せ、毎回 rebuild | **edinet__documents / edinet__facts / jpx__stq_prices / jpx__daily_ohlc** |
 | mart | dbt モデル（業務エンティティ） | **未設計** |
 
 - 命名: raw/cleansed は `<層>__<内容>`（例: `raw__edinet_document_index`、
@@ -86,7 +86,7 @@ Postgres 版（約71分）から半減した。JPX 形式C（280日規模・最�
 
 - raw（doc index の view）、landing（edinet_csv_facts / jpx_stq_words /
   jpx_stq_facts / jpx_monthly_ohlc_facts、日付単位 Parquet）、cleansed
-  （edinet__documents / edinet__facts / jpx__stq_prices / jpx__monthly_ohlc、
+  （edinet__documents / edinet__facts / jpx__stq_prices / jpx__daily_ohlc、
   毎回 rebuild）、Prefect フロー、docker compose（transform 単一サービス）、
   systemd（transform のみ）、GitHub Actions 3 本まで実装済み。
 - EDINET・JPX形式Cは Mac Mini への反映・実データ検証まで完了（2026-09-12）。
