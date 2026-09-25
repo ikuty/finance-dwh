@@ -68,60 +68,74 @@ martで次のルールにより1列へ統合する。
 `accounting_standard`・`has_consolidated`は`intermediate__edinet__dei_facts`から
 そのまま引き継ぐ（DEI「会計基準、DEI」「連結決算の有無、DEI」）。
 
-## mart__jpx_edinet__valuation_indicators
+## mart__jpx_edinet__daily_valuation_indicators
 
-grain: `mart__edinet__financial_indicators`と同じ`(edinet_code, fiscal_year, period_type)`。
-銘柄コードは`sec_code`（EDINET、5桁）の末尾1桁を除去して`intermediate__jpx__daily_prices`の
-`code`（JPX、4桁）と結合する（末尾1桁は証券の種類を表す予備コード、0=普通株式）。
+grain: `(jpx_code, file_date)`。銘柄×期grainだった`mart__jpx_edinet__valuation_indicators`
+（決算期末日/直近営業日という性質の異なる2基準が1行に同居し解釈が難しいと判明）を置き換えた
+（2026-09-25、ユーザー判断）。日次grainにすることで「最新」は単に最終行になり、決算期末日
+時点のスナップショットも日次系列から該当日を1行引くだけで得られる。任意日の推移も取得できる。
 
-株価は2種類の基準日で参照する。いずれも`intermediate__jpx__daily_prices`のraw（分割・併合
-未調整）終値（`coalesce(pm_close, am_close)`、後場引け優先）を使う。EPS/BPS自体が開示時点の
-オリジナルな株式数ベースのため、split調整後（`daily_prices_adjusted`）ではなくrawを使うのが
-整合的（自己申告`per`との突合検証で確認済み）。
+銘柄コードは`mart__edinet__financial_indicators.sec_code`（EDINET、5桁）の末尾1桁を除去して
+`intermediate__jpx__daily_prices_adjusted`の`jpx_code`（JPX、4桁）と結合する。
 
-- **決算期末日ベース**（`period_end_close`）: `file_date <= period_end`の中で最大の
-  `file_date`（休業日なら直前営業日）の終値。ASOF JOINで算出。
-- **直近営業日ベース**（列名`_latest`サフィックス）: 銘柄ごとの最新`file_date`の終値
-  （`latest_close`）。
+### 「参照可能な最新の開示」の判定
+
+決算期末日ではなく**開示日**（`submit_date_time`）を基準にする。決算期末日を基準にすると、
+実際にはまだ開示されていない数値を先読みしてしまう（実データで通期は約87〜90日、四半期でも
+約42〜43日のディスクロージャーラグを確認済み）。`submit_date_time <= file_date`を満たす
+直近1件をASOF JOINで採用する。
+
+### 分割・併合をまたぐ期間のEPS/BPS/発行済株式数の調整
+
+株価（`close`）は`intermediate__jpx__daily_prices_adjusted`の累積調整係数
+（`cum_adjustment_factor`）で調整済みだが、EPS/BPS/`shares_outstanding`は開示時点の株式数の
+まま。ある開示（`period_end`時点）の後に分割・併合が起きると、次の開示までの間は「調整後
+株価 ÷ 未調整EPS」で計算が歪む。これを解消するため、開示の決算期末日時点の累積調整係数
+（`period_end_cum_adj`、`period_end`以前で直近の取引日の値をASOF JOINで取得）と、対象取引日
+自身の累積調整係数（`file_date_cum_adj`）の比を使う。
+
+```
+adj_ratio = period_end_cum_adj / file_date_cum_adj
+eps_adjusted = eps × adj_ratio
+bps_adjusted = bps × adj_ratio
+shares_outstanding_adjusted = shares_outstanding ÷ adj_ratio   -- 株数は逆方向
+```
+
+分割・併合をまたいでいなければ`period_end_cum_adj = file_date_cum_adj`となり`adj_ratio = 1`
+（無調整）。`sales`は企業単位の総額指標で株式数に依存しないため調整不要（開示値をそのまま
+使う）。
+
+### 指標一覧
 
 | 列名 | 説明 | 計算式 |
 |---|---|---|
-| `period_end_close_date` / `period_end_close` | 決算期末日ベースの参照日・終値 | （上記ルール参照、株価そのもの） |
-| `latest_close_date` / `latest_close` | 直近営業日ベースの参照日・終値 | （上記ルール参照、株価そのもの） |
-| `per_disclosed` | 企業自己申告PER | `mart__edinet__financial_indicators.per`をそのまま転記 |
-| `pbr` | 株価純資産倍率（決算期末日ベース） | `period_end_close / bps` |
-| `pbr_latest` | 株価純資産倍率（直近営業日ベース） | `latest_close / bps` |
-| `per_computed` | 実勢PER（決算期末日ベース） | `period_end_close / eps` |
-| `per_computed_latest` | 実勢PER（直近営業日ベース） | `latest_close / eps` |
-| `market_cap` | 時価総額（決算期末日ベース） | `period_end_close × shares_outstanding` |
-| `market_cap_latest` | 時価総額（直近営業日ベース） | `latest_close × shares_outstanding` |
-| `psr` | 株価売上高倍率（決算期末日ベース） | `market_cap / sales` |
-| `psr_latest` | 株価売上高倍率（直近営業日ベース） | `market_cap_latest / sales` |
-| `earnings_yield` | 株式益回り（決算期末日ベース、PERの逆数） | `eps / period_end_close` |
+| `close` | 当日の終値（raw、無調整） | `coalesce(pm_close, am_close)`（後場引け優先） |
+| `adj_ratio` | 分割・併合調整比率 | `period_end_cum_adj / file_date_cum_adj` |
+| `eps_adjusted` / `bps_adjusted` | 調整後EPS/BPS | `eps or bps × adj_ratio` |
+| `shares_outstanding_adjusted` | 調整後発行済株式数 | `shares_outstanding ÷ adj_ratio` |
+| `pbr` | 株価純資産倍率 | `close / bps_adjusted` |
+| `per` | 実勢PER | `close / eps_adjusted` |
+| `market_cap` | 時価総額 | `close × shares_outstanding_adjusted` |
+| `psr` | 株価売上高倍率 | `market_cap / sales` |
+| `earnings_yield` | 株式益回り（PERの逆数） | `eps_adjusted / close` |
 
-`bps`/`eps`/`sales`/`shares_outstanding`はいずれも`mart__edinet__financial_indicators`から
-そのまま引き継ぐ（＝上表の会計基準またぎのcoalesce後の値）。分母が0またはNULLの場合は
-該当指標もNULLになる。
+`eps`/`bps`/`sales`/`shares_outstanding`（無調整の開示値そのまま）も参照用に保持している。
+分母が0またはNULLの場合は該当指標もNULLになる。
 
 ## 検証テスト
 
-- `assert_mart__jpx_edinet__valuation_indicators_per_matches_disclosed`（severity=warn、
-  相対誤差2%）: `per_disclosed`と`per_computed`を突合し、結合キー・日付ルールの健全性を
-  継続的に検証する。
+- `assert_mart__jpx_edinet__daily_valuation_indicators_deduplicated`: `(jpx_code, file_date)`
+  の一意性を検証する。
+- `assert_mart__jpx_edinet__daily_valuation_indicators_per_matches_disclosed`（severity=warn、
+  相対誤差2%）: 企業自己申告PERは決算期末日の終値を基準に計算されているため（日次martの
+  「開示日基準」の行とは直接比較できない）、決算期末日時点の終値を別途ASOF JOINで求めて
+  突合する。結合キー・調整係数ロジックの健全性チェックを兼ねる。
 - `assert_mart__edinet__financial_indicators_*`（詳細は`docs/mart_validation.md`参照）:
   `eps`/`bps`の逆算検証（`shares_outstanding`を分母に使用）、`sales`のYTD単調性、
   `total_assets >= net_assets`等、ファンダメンタルズ側の内部整合性テスト。
 
-## 今後の拡張候補（未実装、設計検討中）
+## 今後の拡張候補（未実装）
 
-- **日次PER/PBR**（`intermediate__jpx__daily_prices_adjusted`の全取引日に対し、その日
-  参照可能な最新EPS/BPSで算出するmart）。設計上の主要論点（2026-09-25検討開始）:
-  1. 「参照可能な最新」の基準は決算期末日ではなく**開示日**（`submit_date_time`）とする
-     必要がある（決算期末日基準だと未開示の数値を先読みしてしまう。実データで通期は
-     約87〜90日、四半期でも約42〜43日のラグを確認済み）。現状`mart__edinet__financial_
-     indicators`に`submit_date_time`列が無いため、追加が必要。
-  2. 分割・併合をまたぐ期間は、EPS/BPS側も`intermediate__jpx__daily_prices_adjusted`の
-     `cum_adjustment_factor`を用いて同じ株式数基準に揃える必要がある（開示日時点の係数と
-     対象取引日時点の係数の比率を掛け合わせる）。
-  3. 通期のみを基準にするか、四半期・半期も「最新」に含めるか（四半期EPSは期首からの
-     累計値のため、含める場合はQ1時点のPERが通期基準より高く出る等の性質を前提とする）。
+- 通期のみを「最新開示」の基準にするか、四半期・半期も含めるかは、現状は問わず直近の開示を
+  採用する設計（四半期EPSは期首からの累計値のため、Q1時点のPERが通期基準より高く出る等の
+  性質を前提とする）。用途に応じて通期限定版が必要になった場合は別途検討する。
