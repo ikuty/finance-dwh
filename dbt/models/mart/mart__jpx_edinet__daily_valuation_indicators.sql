@@ -50,6 +50,11 @@
 --   会社予想EPSは決算短信・適時開示の「業績予想」欄に記載される情報で、EDINETの
 --   有価証券報告書・四半期報告書には通常含まれないため、現状のデータソースからは
 --   予想PERを算出できない（別データソースが必要、未対応）。
+--
+-- dividend_per_share・dividend_yield(2026-09-25追加): EDINETの１株当たり配当額
+-- （経営指標等表由来、開示時点の株式数基準）を、eps_adjustedと同じadj_ratioで
+-- 対象取引日の株式数基準へ変換した上でdividend_per_share_adjustedとし、
+-- dividend_yield = dividend_per_share_adjusted / closeとする。
 
 {{ config(
     materialized='external',
@@ -60,7 +65,7 @@
 with edinet as (
     select
         doc_id, edinet_code, sec_code, filer_name, fiscal_year, period_type,
-        period_end, submit_date_time, bps, eps, sales, shares_outstanding,
+        period_end, submit_date_time, bps, eps, sales, shares_outstanding, dividend_per_share,
         left(sec_code, 4) as jpx_code
     from {{ ref('mart__edinet__financial_indicators') }}
     where sec_code is not null
@@ -96,7 +101,7 @@ daily as (
         p.cum_adjustment_factor as file_date_cum_adj,
         d.doc_id, d.edinet_code, d.sec_code, d.filer_name, d.fiscal_year, d.period_type,
         d.period_end, d.submit_date_time,
-        d.bps, d.eps, d.sales, d.shares_outstanding,
+        d.bps, d.eps, d.sales, d.shares_outstanding, d.dividend_per_share,
         d.period_end_cum_adj
     from prices p
     asof left join edinet_with_period_end_adj d
@@ -137,5 +142,10 @@ select
     case when sales is not null and sales != 0 and shares_outstanding is not null and period_end_cum_adj is not null and file_date_cum_adj is not null and period_end_cum_adj != 0
         then (close * (shares_outstanding * file_date_cum_adj / period_end_cum_adj)) / sales end as psr,
     case when eps is not null and close is not null and close != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
-        then (eps * period_end_cum_adj / file_date_cum_adj) / close end as earnings_yield
+        then (eps * period_end_cum_adj / file_date_cum_adj) / close end as earnings_yield,
+    dividend_per_share,
+    case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then dividend_per_share * period_end_cum_adj / file_date_cum_adj end as dividend_per_share_adjusted,
+    case when dividend_per_share is not null and close is not null and close != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then (dividend_per_share * period_end_cum_adj / file_date_cum_adj) / close end as dividend_yield
 from daily
