@@ -35,8 +35,13 @@
 --
 -- 2026-09-25追加(dividend_per_share、1株当たり配当額): shares_outstandingと同様、
 -- IFRS/US GAAP専用のitem_nameが存在せず3モデル共通で同一のため、コメントの意味では
--- 会計基準に依存しないが、経営指標等表内での連結/個別・当期判定はEPS等と同じ
--- コンテキスト構造のため、この抽出パターンをそのまま踏襲する。
+-- 会計基準に依存しない。ただし他の指標とは異なりhas_consolidatedによる個別値
+-- フォールバック制限を適用しない(2026-09-25実データ検証で判明): 配当額は連結決算
+-- 作成企業であっても経営指標等表で連結コンテキストのタグが付くことは稀（実データ
+-- 全体で連結コンテキスト142件 vs 個別コンテキスト160,355件、99.9%が個別）。
+-- total_assets/salesのような「個別値が連結値の代替として比較不可能」という問題が
+-- 配当額には当てはまらない（1株当たり配当は連結・個別で本質的に同一の、企業単位の
+-- 意思決定であり、規模の異なる指標ではない）ため、常に個別値へフォールバックする。
 
 {{ config(
     materialized='external',
@@ -231,9 +236,7 @@ select
     ) as cash_and_equivalents,
     coalesce(
         max(case when item_name = '１株当たり配当額、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' then value_num end),
-        case when not bool_or(has_consolidated) then
-            max(case when item_name = '１株当たり配当額、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' then value_num end)
-        end
+        max(case when item_name = '１株当たり配当額、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' then value_num end)
     ) as dividend_per_share
 from with_dei
 group by doc_id
