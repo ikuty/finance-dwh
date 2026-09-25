@@ -1,4 +1,4 @@
--- 書類(doc_id)単位のIFRS経営指標等（18指標）。IFRS名のitem_nameのみを対象とし、
+-- 書類(doc_id)単位のIFRS経営指標等（19指標）。IFRS名のitem_nameのみを対象とし、
 -- J-GAAP/US GAAPの項目とは一切混在させない。設計・連結/個別の扱いは
 -- intermediate__edinet__jgaap_financial_factsと同じ（詳細はそちらのコメント参照）。
 --
@@ -13,6 +13,10 @@
 -- cash_and_equivalents。comprehensive_incomeはnet_incomeと同じく「親会社の所有者に
 -- 帰属」版を優先し、無ければ総額版にフォールバックする(IFRS税引前利益等と同じ命名
 -- パターン)。詳細はintermediate__edinet__jgaap_financial_factsのコメント参照。
+--
+-- dividend_per_shareはhas_consolidatedによる個別値フォールバック制限を適用しない
+-- (配当額は連結決算作成企業でも経営指標等表で個別コンテキストのみタグ付けされるのが
+-- 通例のため)。詳細はintermediate__edinet__jgaap_financial_factsのコメント参照。
 
 {{ config(
     materialized='external',
@@ -46,7 +50,8 @@ relevant_facts as (
         '発行済株式総数（普通株式）、経営指標等',
         '希薄化後１株当たり利益又は損失（△）（IFRS）、経営指標等',
         '当期包括利益：親会社の所有者に帰属（IFRS）、経営指標等', '当期包括利益（IFRS）、経営指標等',
-        '現金及び現金同等物（IFRS）、経営指標等'
+        '現金及び現金同等物（IFRS）、経営指標等',
+        '１株当たり配当額、経営指標等'
     )
 ),
 
@@ -177,6 +182,10 @@ select
         case when not bool_or(has_consolidated) then
             max(case when item_name = '現金及び現金同等物（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end)
         end
-    ) as cash_and_equivalents
+    ) as cash_and_equivalents,
+    coalesce(
+        max(case when item_name = '１株当たり配当額、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' then value_num end),
+        max(case when item_name = '１株当たり配当額、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' then value_num end)
+    ) as dividend_per_share
 from with_dei
 group by doc_id

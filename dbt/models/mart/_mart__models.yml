@@ -79,6 +79,8 @@ models:
         description: "包括利益。IFRS/US GAAPは親会社所有者/株主に帰属する分を優先し、無ければ総額にフォールバック。"
       - name: cash_and_equivalents
         description: "現金及び現金同等物の残高。"
+      - name: dividend_per_share
+        description: "1株当たり配当額。IFRS/US GAAP専用のitem_nameが存在せず3会計基準共通（会計基準に依存しない項目）。"
 
   - name: mart__jpx_edinet__daily_valuation_indicators
     description: >
@@ -122,3 +124,9 @@ models:
         description: "株価売上高倍率＝market_cap / sales。"
       - name: earnings_yield
         description: "株式益回り＝eps_adjusted / close（PERの逆数）。perと同じく実績EPSベース。"
+      - name: dividend_per_share
+        description: "開示された1株当たり配当額そのまま（分割・併合調整前）。"
+      - name: dividend_per_share_adjusted
+        description: "adj_ratioを掛けて当該取引日の株式数基準に換算した1株当たり配当額。"
+      - name: dividend_yield
+        description: "配当利回り＝dividend_per_share_adjusted / close。"
