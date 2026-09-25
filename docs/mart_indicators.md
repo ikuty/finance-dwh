@@ -31,6 +31,12 @@ martで次のルールにより1列へ統合する。
   満たさない値は採用しない（無ければNULL、他の会計基準側でJPY建ての値が見つかればそちらが
   採用される）。比率系（`equity_ratio`/`roe`/`per`/`payout_ratio`）は無単位(pure)のため
   この条件は適用しない。
+- **例外: `dividend_per_share`は連結優先・個別フォールバック制限を適用しない**
+  （2026-09-25実データ検証で判明）。配当額は連結決算作成企業でも経営指標等表で個別
+  コンテキストのみタグ付けされるのが通例（実データ全体: 連結コンテキスト142件 vs
+  個別コンテキスト160,355件、99.9%が個別）。他指標のガードが想定する「個別値は連結の
+  代替として比較不可能」という問題（規模の異なる指標間の話）が、連結・個別で本質的に
+  同一の値である配当額には当てはまらないため、常に個別値へフォールバックする。
 
 ### 指標一覧
 
@@ -54,6 +60,7 @@ martで次のルールにより1列へ統合する。
 | `diluted_eps` | 潜在株式調整後EPS（希薄化後EPS） | 円/株(JPYPerShares) | 潜在株式調整後１株当たり当期純利益 | 希薄化後１株当たり利益又は損失（△）（IFRS） | 希薄化後１株当たり当社株主に帰属する利益又は損失（△）（US GAAP） |
 | `comprehensive_income` | 包括利益 | 円 | 包括利益 | 当期包括利益：親会社の所有者に帰属（IFRS）→無ければ当期包括利益（IFRS） | 当社株主に帰属する包括利益（US GAAP）→無ければ包括利益（US GAAP） |
 | `cash_and_equivalents` | 現金及び現金同等物の残高 | 円 | 現金及び現金同等物の残高 | 現金及び現金同等物（IFRS） | 現金及び現金同等物（US GAAP） |
+| `dividend_per_share` | 1株当たり配当額 | 円/株(JPYPerShares) | １株当たり配当額、経営指標等 | 同左（IFRS/US GAAP専用item_nameなし、3会計基準共通） | 同左 |
 
 `shares_outstanding`（発行済株式総数、普通株式、単位: shares）のみ他の指標と抽出元が異なる。
 
@@ -118,9 +125,11 @@ shares_outstanding_adjusted = shares_outstanding ÷ adj_ratio   -- 株数は逆�
 | `market_cap` | 時価総額 | `close × shares_outstanding_adjusted` |
 | `psr` | 株価売上高倍率 | `market_cap / sales` |
 | `earnings_yield` | 株式益回り（PERの逆数） | `eps_adjusted / close` |
+| `dividend_per_share_adjusted` | 調整後1株当たり配当額 | `dividend_per_share × adj_ratio` |
+| `dividend_yield` | 配当利回り | `dividend_per_share_adjusted / close` |
 
-`eps`/`bps`/`sales`/`shares_outstanding`（無調整の開示値そのまま）も参照用に保持している。
-分母が0またはNULLの場合は該当指標もNULLになる。
+`eps`/`bps`/`sales`/`shares_outstanding`/`dividend_per_share`（無調整の開示値そのまま）も
+参照用に保持している。分母が0またはNULLの場合は該当指標もNULLになる。
 
 ### `per`・`earnings_yield`は「実績EPS」ベース（重要、証券会社サイトとの比較時に注意）
 

@@ -84,7 +84,8 @@ combined as (
         jg.shares_outstanding as jg_shares_outstanding, ifrs.shares_outstanding as ifrs_shares_outstanding, us.shares_outstanding as us_shares_outstanding,
         jg.diluted_eps as jg_diluted_eps, ifrs.diluted_eps as ifrs_diluted_eps, us.diluted_eps as us_diluted_eps,
         jg.comprehensive_income as jg_comprehensive_income, ifrs.comprehensive_income as ifrs_comprehensive_income, us.comprehensive_income as us_comprehensive_income,
-        jg.cash_and_equivalents as jg_cash_and_equivalents, ifrs.cash_and_equivalents as ifrs_cash_and_equivalents, us.cash_and_equivalents as us_cash_and_equivalents
+        jg.cash_and_equivalents as jg_cash_and_equivalents, ifrs.cash_and_equivalents as ifrs_cash_and_equivalents, us.cash_and_equivalents as us_cash_and_equivalents,
+        jg.dividend_per_share as jg_dividend_per_share, ifrs.dividend_per_share as ifrs_dividend_per_share, us.dividend_per_share as us_dividend_per_share
     from target_periods tp
     left join dei d on d.doc_id = tp.doc_id
     left join {{ ref('intermediate__edinet__jgaap_financial_facts') }} jg on jg.doc_id = tp.doc_id
@@ -223,5 +224,11 @@ select
         case when accounting_standard = 'Japan GAAP' then jg_cash_and_equivalents end,
         case when accounting_standard = 'US GAAP' then us_cash_and_equivalents end,
         ifrs_cash_and_equivalents, jg_cash_and_equivalents, us_cash_and_equivalents
-    ) as cash_and_equivalents
+    ) as cash_and_equivalents,
+    coalesce(
+        case when accounting_standard = 'IFRS' then ifrs_dividend_per_share end,
+        case when accounting_standard = 'Japan GAAP' then jg_dividend_per_share end,
+        case when accounting_standard = 'US GAAP' then us_dividend_per_share end,
+        ifrs_dividend_per_share, jg_dividend_per_share, us_dividend_per_share
+    ) as dividend_per_share
 from combined
