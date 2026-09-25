@@ -170,3 +170,27 @@ def test_load_one_month_splits_into_day_partitions_and_writes_marker(
 
     # 月マーカーが取り込み済み判定に使われる
     assert m.landing_logged_months(landing) == {"2025-09"}
+
+
+def test_load_one_month_raises_and_skips_marker_when_zero_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """build_recordsが0件を返した場合（例: ヘッダー検出失敗）、例外を送出し、
+    月マーカー・日付パーティションのどちらも書き込まない。2022年3,4,5,6,9月分で
+    実機発生した「0件なのに取り込み済みマーカーが書かれる」バグの回帰テスト
+    （詳細はjpx_monthly_ohlc_facts.pyの_merged_header_date_code_boundary参照）。"""
+    lake = tmp_path / "lake"
+    landing = tmp_path / "landing"
+    make_month_pdf(lake, "2025-09")
+
+    def fake_iter_words_no_header(pdf_path: Path) -> Iterator[jpx_stq_pdf.Word]:
+        # ヘッダー行を含まない単語列(=ヘッダー検出が常に失敗し0件になる想定)。
+        yield jpx_stq_pdf.Word(page=1, top=100.0, x0=10.0, x1=20.0, size=6.0, text="dummy")
+
+    monkeypatch.setattr(jpx_stq_pdf, "iter_words", fake_iter_words_no_header)
+
+    with pytest.raises(ValueError, match="2025-09"):
+        m.load_one_month(lake, landing, "2025-09")
+
+    assert not (landing / "jpx_monthly_ohlc_loaded_months" / "file_month=2025-09").exists()
+    assert not (landing / "jpx_monthly_ohlc_facts").exists()
