@@ -1,4 +1,4 @@
-# mart層 指標定義一覧（2026-09-25時点）
+# mart層 指標定義一覧（2026-09-26時点）
 
 mart層の各指標について、どのような計算式・ソースで集計しているかをまとめる。
 実装が変わったらこのドキュメントも合わせて更新すること（正とするのは常に
@@ -75,6 +75,29 @@ martで次のルールにより1列へ統合する。
 `accounting_standard`・`has_consolidated`は`intermediate__edinet__dei_facts`から
 そのまま引き継ぐ（DEI「会計基準、DEI」「連結決算の有無、DEI」）。
 
+## mart__jpx_edinet__disclosed_fundamentals
+
+grain: `(jpx_code, doc_id)`（実質的にはdoc_id単位、jpx_codeは各doc_idに対して一意に
+決まる属性）。`mart__jpx_edinet__daily_valuation_indicators`との責務分離のため新設
+（2026-09-26、ユーザー判断）: 株価(`close`)と連動せず、開示（決算期）が変わるまで
+値が一定の指標（`eps`/`bps`/`sales`/`shares_outstanding`/`dividend_per_share`等）を
+日次grainに冗長に持たせず、この開示grainのモデルに一元化する。
+
+`mart__edinet__financial_indicators`をそのまま拡張せずこのモデルを分離した理由:
+`mart__edinet__financial_indicators`はEDINET開示のみに依存する純粋なmartとして維持し、
+JPX価格調整（`period_end_cum_adj`）の概念を持ち込まない。
+
+銘柄コードは`mart__edinet__financial_indicators.sec_code`（EDINET、5桁）の末尾1桁を除去して
+`jpx_code`（JPX、4桁）とする。
+
+| 列名 | 説明 |
+|---|---|
+| `doc_id` | 根拠となった書類のID（一意）。 |
+| `jpx_code` | 銘柄コード（JPX、4桁）。 |
+| `edinet_code`/`sec_code`/`filer_name`/`fiscal_year`/`period_type`/`period_end`/`submit_date_time` | `mart__edinet__financial_indicators`と同一。 |
+| `eps`/`bps`/`sales`/`shares_outstanding`/`dividend_per_share` | 開示された値そのまま（分割・併合調整前）。`mart__edinet__financial_indicators`と同一。 |
+| `period_end_cum_adj` | 決算期末日(`period_end`)時点（以前で直近の取引日）の累積調整係数。`intermediate__jpx__daily_prices_adjusted.cum_adjustment_factor`をASOF JOINで取得。 |
+
 ## mart__jpx_edinet__daily_valuation_indicators
 
 grain: `(jpx_code, file_date)`。銘柄×期grainだった`mart__jpx_edinet__valuation_indicators`
@@ -82,8 +105,13 @@ grain: `(jpx_code, file_date)`。銘柄×期grainだった`mart__jpx_edinet__val
 （2026-09-25、ユーザー判断）。日次grainにすることで「最新」は単に最終行になり、決算期末日
 時点のスナップショットも日次系列から該当日を1行引くだけで得られる。任意日の推移も取得できる。
 
-銘柄コードは`mart__edinet__financial_indicators.sec_code`（EDINET、5桁）の末尾1桁を除去して
-`intermediate__jpx__daily_prices_adjusted`の`jpx_code`（JPX、4桁）と結合する。
+株価(`close`)と連動して日次で変化する指標のみを持つ（2026-09-26、開示ベースの値は
+`mart__jpx_edinet__disclosed_fundamentals`へ分離）。`fiscal_year`/`period_type`/
+`submit_date_time`等の開示メタデータや、`eps`/`bps`/`sales`/`shares_outstanding`/
+`dividend_per_share`の無調整値が必要な場合は、この`doc_id`で`mart__jpx_edinet__
+disclosed_fundamentals`と結合する。なお`eps_adjusted`/`bps_adjusted`等が既にある
+場合、無調整の生値は代数的に逆算も可能（`eps_adjusted = close / per`等、詳細は
+「調整済み生値の逆算」参照）。
 
 ### 「参照可能な最新の開示」の判定
 
@@ -98,8 +126,8 @@ grain: `(jpx_code, file_date)`。銘柄×期grainだった`mart__jpx_edinet__val
 （`cum_adjustment_factor`）で調整済みだが、EPS/BPS/`shares_outstanding`は開示時点の株式数の
 まま。ある開示（`period_end`時点）の後に分割・併合が起きると、次の開示までの間は「調整後
 株価 ÷ 未調整EPS」で計算が歪む。これを解消するため、開示の決算期末日時点の累積調整係数
-（`period_end_cum_adj`、`period_end`以前で直近の取引日の値をASOF JOINで取得）と、対象取引日
-自身の累積調整係数（`file_date_cum_adj`）の比を使う。
+（`period_end_cum_adj`、`mart__jpx_edinet__disclosed_fundamentals`で開示grainとして
+事前計算済み）と、対象取引日自身の累積調整係数（`file_date_cum_adj`）の比を使う。
 
 ```
 adj_ratio = period_end_cum_adj / file_date_cum_adj
@@ -128,8 +156,23 @@ shares_outstanding_adjusted = shares_outstanding ÷ adj_ratio   -- 株数は逆�
 | `dividend_per_share_adjusted` | 調整後1株当たり配当額 | `dividend_per_share × adj_ratio` |
 | `dividend_yield` | 配当利回り | `dividend_per_share_adjusted / close` |
 
-`eps`/`bps`/`sales`/`shares_outstanding`/`dividend_per_share`（無調整の開示値そのまま）も
-参照用に保持している。分母が0またはNULLの場合は該当指標もNULLになる。
+分母が0またはNULLの場合は該当指標もNULLになる。
+
+### 調整済み生値の逆算
+
+`eps`/`bps`/`sales`/`shares_outstanding`/`dividend_per_share`の無調整値そのものは
+このモデルには無いが（`mart__jpx_edinet__disclosed_fundamentals`を`doc_id`で結合すれば
+取得可能）、`close`と各比率さえあれば代数的に逆算できる（`close`≠0・各比率が非NULLの場合）。
+
+```
+eps_adjusted                = close / per
+bps_adjusted                = close / pbr
+shares_outstanding_adjusted = market_cap / close
+dividend_per_share_adjusted = dividend_yield × close
+```
+
+無調整のadj_ratio自体は`mart__jpx_edinet__disclosed_fundamentals`のraw `eps`と
+`eps_adjusted / eps`で求められる。
 
 ### `per`・`earnings_yield`は「実績EPS」ベース（重要、証券会社サイトとの比較時に注意）
 
@@ -153,6 +196,8 @@ shares_outstanding_adjusted = shares_outstanding ÷ adj_ratio   -- 株数は逆�
 
 ## 検証テスト
 
+- `unique`/`not_null` on `mart__jpx_edinet__disclosed_fundamentals.doc_id`: 開示grainの
+  一意性を検証する（`_mart__models.yml`の`data_tests`）。
 - `assert_mart__jpx_edinet__daily_valuation_indicators_deduplicated`: `(jpx_code, file_date)`
   の一意性を検証する。
 - `assert_mart__jpx_edinet__daily_valuation_indicators_per_matches_disclosed`（severity=warn、
