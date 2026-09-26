@@ -4,6 +4,14 @@
 -- 日次grainにすることで「最新」は単に最終行になり、決算期末日時点のスナップショット
 -- も日次系列から該当日を1行引くだけで得られる。任意日の推移も取得できる。
 --
+-- 責務分離(2026-09-26、ユーザー判断): 株価(close)と連動して日次で変化する指標
+-- （pbr/per/market_cap/psr/earnings_yield/dividend_yield、および分割・併合調整
+-- 済みの*_adjusted列）だけをこのモデルに残す。eps/bps/sales/shares_outstanding/
+-- dividend_per_share等の開示値そのものや、fiscal_year/period_type/period_end/
+-- submit_date_time等の開示メタデータは、決算期・分割イベントが起きない限り値が
+-- 変わらず日次grainでは冗長なため、開示grainのmart__jpx_edinet__disclosed_
+-- fundamentalsへ切り出した。それらが必要な場合はdoc_idで結合する。
+--
 -- 「その取引日時点で参照可能な最新の開示」の判定(重要、docs/mart_indicators.md
 -- 「今後の拡張候補」で事前検討済み):
 --   決算期末日ではなく submit_date_time（開示日）を基準にする。決算期末日を基準に
@@ -19,8 +27,8 @@
 --   「調整後株価 ÷ 未調整EPS」で計算が歪む（分割比率の分だけPERが不自然に
 --   高く/低く出る）。
 --
---   開示の権利落ち日基準の累積調整係数(period_end_cum_adj、period_end以前で
---   直近の取引日のcum_adjustment_factorをASOF JOINで取得)と、対象取引日自身の
+--   開示の権利落ち日基準の累積調整係数(period_end_cum_adj、mart__jpx_edinet__
+--   disclosed_fundamentalsで開示grainとして事前計算済み)と、対象取引日自身の
 --   累積調整係数(file_date_cum_adj)の比を使い、EPS/BPSを対象取引日の株式数基準へ
 --   変換する:
 --     adj_ratio = period_end_cum_adj / file_date_cum_adj
@@ -51,9 +59,9 @@
 --   有価証券報告書・四半期報告書には通常含まれないため、現状のデータソースからは
 --   予想PERを算出できない（別データソースが必要、未対応）。
 --
--- dividend_per_share・dividend_yield(2026-09-25追加): EDINETの１株当たり配当額
--- （経営指標等表由来、開示時点の株式数基準）を、eps_adjustedと同じadj_ratioで
--- 対象取引日の株式数基準へ変換した上でdividend_per_share_adjustedとし、
+-- dividend_per_share_adjusted・dividend_yield(2026-09-25追加): EDINETの１株当たり
+-- 配当額（経営指標等表由来、開示時点の株式数基準）を、eps_adjustedと同じadj_ratio
+-- で対象取引日の株式数基準へ変換した上でdividend_per_share_adjustedとし、
 -- dividend_yield = dividend_per_share_adjusted / closeとする。
 
 {{ config(
@@ -62,34 +70,20 @@
     format='parquet'
 ) }}
 
-with edinet as (
-    select
-        doc_id, edinet_code, sec_code, filer_name, fiscal_year, period_type,
-        period_end, submit_date_time, bps, eps, sales, shares_outstanding, dividend_per_share,
-        left(sec_code, 4) as jpx_code
-    from {{ ref('mart__edinet__financial_indicators') }}
-    where sec_code is not null
-),
-
-prices as (
+with prices as (
     select
         code,
         file_date,
         coalesce(pm_close, am_close) as close,
-        cum_adjustment_factor
+        cum_adjustment_factor as file_date_cum_adj
     from {{ ref('intermediate__jpx__daily_prices_adjusted') }}
 ),
 
--- 各開示について、その決算期末日時点（直前営業日）の累積調整係数を求める。
--- これが「開示時点の株式数」を表す基準点になる。
-edinet_with_period_end_adj as (
+fundamentals as (
     select
-        e.*,
-        pe.cum_adjustment_factor as period_end_cum_adj
-    from edinet e
-    asof left join prices pe
-        on e.jpx_code = pe.code
-        and pe.file_date <= e.period_end
+        jpx_code, doc_id, submit_date_time,
+        eps, bps, sales, shares_outstanding, dividend_per_share, period_end_cum_adj
+    from {{ ref('mart__jpx_edinet__disclosed_fundamentals') }}
 ),
 
 -- 各取引日について、その日「時点で開示済み」の直近の開示をASOF JOINで判定する。
@@ -98,15 +92,14 @@ daily as (
         p.code as jpx_code,
         p.file_date,
         p.close,
-        p.cum_adjustment_factor as file_date_cum_adj,
-        d.doc_id, d.edinet_code, d.sec_code, d.filer_name, d.fiscal_year, d.period_type,
-        d.period_end, d.submit_date_time,
-        d.bps, d.eps, d.sales, d.shares_outstanding, d.dividend_per_share,
-        d.period_end_cum_adj
+        p.file_date_cum_adj,
+        f.doc_id,
+        f.eps, f.bps, f.sales, f.shares_outstanding, f.dividend_per_share,
+        f.period_end_cum_adj
     from prices p
-    asof left join edinet_with_period_end_adj d
-        on p.code = d.jpx_code
-        and d.submit_date_time <= p.file_date
+    asof left join fundamentals f
+        on p.code = f.jpx_code
+        and f.submit_date_time <= p.file_date
 )
 
 select
@@ -114,25 +107,16 @@ select
     file_date,
     close,
     doc_id,
-    edinet_code,
-    sec_code,
-    filer_name,
-    fiscal_year,
-    period_type,
-    period_end,
-    submit_date_time,
     case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then period_end_cum_adj / file_date_cum_adj end as adj_ratio,
-    eps,
     case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then eps * period_end_cum_adj / file_date_cum_adj end as eps_adjusted,
-    bps,
     case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then bps * period_end_cum_adj / file_date_cum_adj end as bps_adjusted,
-    shares_outstanding,
     case when period_end_cum_adj is not null and file_date_cum_adj is not null and period_end_cum_adj != 0
         then shares_outstanding * file_date_cum_adj / period_end_cum_adj end as shares_outstanding_adjusted,
-    sales,
+    case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then dividend_per_share * period_end_cum_adj / file_date_cum_adj end as dividend_per_share_adjusted,
     case when bps is not null and bps != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then close / (bps * period_end_cum_adj / file_date_cum_adj) end as pbr,
     case when eps is not null and eps != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
@@ -143,9 +127,6 @@ select
         then (close * (shares_outstanding * file_date_cum_adj / period_end_cum_adj)) / sales end as psr,
     case when eps is not null and close is not null and close != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then (eps * period_end_cum_adj / file_date_cum_adj) / close end as earnings_yield,
-    dividend_per_share,
-    case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
-        then dividend_per_share * period_end_cum_adj / file_date_cum_adj end as dividend_per_share_adjusted,
     case when dividend_per_share is not null and close is not null and close != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then (dividend_per_share * period_end_cum_adj / file_date_cum_adj) / close end as dividend_yield
 from daily

@@ -82,13 +82,35 @@ models:
       - name: dividend_per_share
         description: "1株当たり配当額。IFRS/US GAAP専用のitem_nameが存在せず3会計基準共通（会計基準に依存しない項目）。"
 
+  - name: mart__jpx_edinet__disclosed_fundamentals
+    description: >
+      銘柄(jpx_code)×開示(doc_id)ごとの財務指標（毎回フル rebuild、Parquet）。
+      mart__edinet__financial_indicatorsに銘柄コード変換(jpx_code)と、決算期末日
+      時点の累積調整係数(period_end_cum_adj)を付与した薄い層。株価に依存しない
+      値のみを持つ（2026-09-26、mart__jpx_edinet__daily_valuation_indicatorsとの
+      責務分離により新設）。
+    columns:
+      - name: doc_id
+        description: "根拠となった書類のID。"
+        data_tests: [not_null, unique]
+      - name: jpx_code
+        description: "銘柄コード（JPX、4桁。sec_codeの先頭4桁）。"
+      - name: edinet_code / sec_code / filer_name / fiscal_year / period_type / period_end / submit_date_time
+        description: "mart__edinet__financial_indicatorsと同一（詳細はそちらのcolumn定義参照）。"
+      - name: eps / bps / sales / shares_outstanding / dividend_per_share
+        description: "開示された値そのまま（分割・併合調整前）。mart__edinet__financial_indicatorsと同一。"
+      - name: period_end_cum_adj
+        description: "決算期末日(period_end)時点（以前で直近の取引日）の累積調整係数。intermediate__jpx__daily_prices_adjusted.cum_adjustment_factorをASOF JOINで取得。"
+
   - name: mart__jpx_edinet__daily_valuation_indicators
     description: >
       銘柄(jpx_code)×取引日(file_date)ごとの株価評価指標（毎回フル rebuild、
-      Parquet）。mart__edinet__financial_indicatorsとintermediate__jpx__daily_
-      prices_adjustedを結合。「最新」は単に最終行、決算期末日時点のスナップショット
-      は該当日を1行引くだけで得られる（2026-09-25、期grainのmart__jpx_edinet__
-      valuation_indicatorsを置き換え）。
+      Parquet）。mart__jpx_edinet__disclosed_fundamentalsとintermediate__jpx__
+      daily_prices_adjustedを結合し、株価(close)と連動して日次で変化する指標のみを
+      持つ（2026-09-26、開示ベースの値はmart__jpx_edinet__disclosed_fundamentals
+      へ分離）。「最新」は単に最終行、決算期末日時点のスナップショットは該当日を
+      1行引くだけで得られる（2026-09-25、期grainのmart__jpx_edinet__valuation_
+      indicatorsを置き換え）。
     columns:
       - name: jpx_code
         description: "銘柄コード（JPX、4桁）。"
@@ -98,11 +120,7 @@ models:
       - name: close
         description: "当日の終値（raw、無調整。当日自身の基準なので調整不要）。"
       - name: doc_id
-        description: "この取引日時点で「参照可能な最新の開示」と判定された書類のID。"
-      - name: submit_date_time
-        description: "その開示の提出日時。file_date時点でsubmit_date_time <= file_dateの直近1件をASOF JOINで採用。"
-      - name: eps / bps / shares_outstanding / sales
-        description: "開示された値そのまま（分割・併合調整前）。"
+        description: "この取引日時点で「参照可能な最新の開示」と判定された書類のID。fiscal_year/period_type/submit_date_time等の開示メタデータや、eps/bps/sales/shares_outstanding/dividend_per_shareの無調整値が必要な場合はmart__jpx_edinet__disclosed_fundamentalsとdoc_idで結合する。"
       - name: adj_ratio
         description: "決算期末日時点の累積調整係数 ÷ 当該取引日の累積調整係数。分割・併合をまたぐ場合のEPS/BPS換算に使う。またがなければ1.0。"
       - name: eps_adjusted / bps_adjusted
@@ -124,8 +142,6 @@ models:
         description: "株価売上高倍率＝market_cap / sales。"
       - name: earnings_yield
         description: "株式益回り＝eps_adjusted / close（PERの逆数）。perと同じく実績EPSベース。"
-      - name: dividend_per_share
-        description: "開示された1株当たり配当額そのまま（分割・併合調整前）。"
       - name: dividend_per_share_adjusted
         description: "adj_ratioを掛けて当該取引日の株式数基準に換算した1株当たり配当額。"
       - name: dividend_yield
