@@ -50,6 +50,10 @@ from pathlib import Path
 from prefect import flow, get_run_logger, task
 
 from flows.load_edinet import load_edinet_csv_facts_backlog, load_edinet_csv_facts_recent
+from flows.load_ir_disclosure_kessan import (
+    load_ir_disclosure_kessan_backlog,
+    load_ir_disclosure_kessan_recent,
+)
 from flows.load_jpx_monthly_ohlc import load_jpx_monthly_ohlc_facts
 from flows.load_jpx_stq import load_jpx_stq_prices_backlog, load_jpx_stq_prices_recent
 from flows.load_mufg_corporate_actions import load_mufg_corporate_actions
@@ -204,6 +208,12 @@ def daily_transform() -> str:
     jpx_loaded = load_jpx_stq_prices_recent()
     logger.info(f"landing 取り込み(JPX形式C・直近分): {jpx_loaded['dates']} 日 / {jpx_loaded['rows']} 銘柄")
 
+    ir_disclosure_loaded = load_ir_disclosure_kessan_recent()
+    logger.info(
+        f"landing 取り込み(ir-disclosure-dl決算短信・直近分): "
+        f"{ir_disclosure_loaded['dates']} 日 / {ir_disclosure_loaded['rows']} 件"
+    )
+
     # mufg-corporate-actionsは週次・3ファイルのみで処理量が常に小さいため、
     # recent/backlog分割は不要（load_mufg_corporate_actions.py参照）。
     mufg_loaded = load_mufg_corporate_actions()
@@ -232,6 +242,12 @@ def daily_transform() -> str:
     logger.info(
         f"landing 取り込み(JPX形式C・バックログ): {jpx_backlog_loaded['dates']} 日 / "
         f"{jpx_backlog_loaded['rows']} 銘柄"
+    )
+
+    ir_disclosure_backlog_loaded = load_ir_disclosure_kessan_backlog()
+    logger.info(
+        f"landing 取り込み(ir-disclosure-dl決算短信・バックログ): "
+        f"{ir_disclosure_backlog_loaded['dates']} 日 / {ir_disclosure_backlog_loaded['rows']} 件"
     )
 
     jpx_monthly_loaded = load_jpx_monthly_ohlc_facts()
