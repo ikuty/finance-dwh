@@ -212,3 +212,37 @@ models:
         description: "変更後の商号。"
       - name: _loaded_at
         description: "DWH取り込み時刻(UTC)。"
+
+  - name: cleansed__ir_disclosure__kessan_tanshin
+    description: >
+      ir-disclosure-dlが取得する決算短信PDFのサマリー情報の型付け版（毎回フル
+      rebuild、Parquet）。disclosure_kind=kessan_tanshinには本体以外のサブタイプ
+      （訂正・補足説明資料・期中レビュー完了notice・開示予定日に関するお知らせ）
+      が混在するため、extraction_status='ok'（本体として構造化できたもの）に
+      絞って利用すること。業績予想セクションは会社が非開示を選んでいる場合
+      forecast_*列が全てNULLになる（抽出失敗ではなく正当な非開示、詳細は
+      ir_disclosure_kessan_facts.pyのモジュールdocstring参照）。
+    columns:
+      - name: docid
+        description: "JPX上場会社情報サービス側のPDF文書ID（ir-disclosure-dlのraw配下のファイル名）。"
+        data_tests: [not_null, unique]
+      - name: extraction_status
+        description: "'ok' / 'correction' / 'supplementary' / 'review_notice' / 'schedule_notice'。"
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["ok", "correction", "supplementary", "review_notice", "schedule_notice"]
+      - name: period_type
+        description: "'q1' / 'q2_half' / 'q3' / 'annual'。"
+      - name: consolidation
+        description: "'consolidated' / 'non_consolidated'。"
+      - name: accounting_standard
+        description: "'jgaap' / 'ifrs' / 'us_gaap'。"
+      - name: ordinary_income
+        description: "経常利益(日本基準のみ、IFRS/米国基準はincome_before_taxを参照)。"
+      - name: income_before_tax
+        description: "税引前利益(IFRS/米国基準のみ)。経常利益と概念が異なるため列を分けている。"
+      - name: forecast_eps
+        description: "会社予想の通期EPS(本サービスの主目的の値)。非開示の場合NULL。"
+      - name: _loaded_at
+        description: "DWH取り込み時刻(UTC)。"
