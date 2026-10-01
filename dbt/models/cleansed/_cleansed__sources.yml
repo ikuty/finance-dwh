@@ -44,3 +44,15 @@ sources:
         description: "三菱UFJ eスマート証券(kabu.com)の商号変更ページ(全列 text)。mufg_stock_splitsと同じ設計。"
         meta:
           external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/mufg_company_name_changes/*/part.parquet', hive_partitioning=false)"
+      - name: ir_disclosure_kessan_facts
+        description: >
+          ir-disclosure-dlが取得する決算短信PDFのサマリー情報を構造化したもの
+          （全列 text）。file_date=YYYY-MM-DD（TDnet検知日）で日付分割。
+          load_ir_disclosure_kessan_recent/backlogタスクがStage1
+          (ir_disclosure_kessan_pdf)→Stage2(ir_disclosure_kessan_facts)を経て書く。
+          disclosure_kind=kessan_tanshinのうち本体以外のサブタイプ（訂正・
+          補足説明資料・期中レビュー完了notice・開示予定日に関するお知らせ）は
+          extraction_statusで区別し、財務数値は本体(extraction_status='ok')の
+          みに入る（詳細はir_disclosure_kessan_facts.pyのdocstring参照）。
+        meta:
+          external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/ir_disclosure_kessan_facts/*/part.parquet', hive_partitioning=false)"
