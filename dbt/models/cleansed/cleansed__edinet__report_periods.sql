@@ -36,6 +36,19 @@
 --   確認した(2026-09-19)。事業年度の期間変更等に伴う変則的な区切りと見られる。
 --   正規表現による抽出ロジック自体は変更不要(自動的にq4として抽出される)だが、
 --   accepted_valuesテストの許容値にq4を追加している。
+--
+-- period_type='half'のperiod_endを period_start + 6ヶ月 - 1日 で再計算する
+-- (2026-10-03発見・修正、重要): EDINETの書類一覧APIが返すperiodEndは、
+-- 半期報告書(doc_type_code='160')については多数の提出者が「対象の半期自体の
+-- 終了日」ではなく「事業年度全体の終了日」を記入している実態を実データで確認した
+-- (実測: half型8,400件中7,010件=83.5%がperiod_end=同一事業年度のannual行の
+-- period_endと一致。訂正履行(opeDateTime)の有無に関わらず広く見られるため、
+-- 個別の訂正ミスではなく書類種別自体の提出慣行。実機確認例: カネコ種苗(E00004)
+-- は訂正なしの初回提出時点から「半期報告書－第78期(2024/06/01－2025/05/31)」
+-- （1年間丸ごと）とdocDescription自体に記載していた)。半期報告書は法定上
+-- 必ず事業年度開始から6ヶ月間を対象とするため、period_start（信頼できる、
+-- この異常の影響を受けない）から6ヶ月後の月末として算出する方が正しい。
+-- q1/q2/q3/q4/annual/quarterはこの異常が実データで確認できなかったため対象外。
 
 {{ config(
     materialized='external',
@@ -90,7 +103,11 @@ select
     b.fiscal_year,
     b.period_type,
     b.period_start,
-    b.period_end,
+    case
+        when b.period_type = 'half' and b.period_start is not null
+            then (b.period_start + interval 6 month - interval 1 day)::date
+        else b.period_end
+    end as period_end,
     case
         when b.filer_category <> 'company' or b.fiscal_year is null then null
         when rf.has_quarterly = 1 then '旧制度'
