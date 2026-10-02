@@ -82,6 +82,9 @@ select
     try_cast(forecast_net_income as decimal(20, 4))              as forecast_net_income,
     try_cast(forecast_net_income_yoy_pct as decimal(10, 4))      as forecast_net_income_yoy_pct,
     try_cast(forecast_eps as decimal(18, 4))                    as forecast_eps,
+    -- forecast_epsの対象期間(当該開示自身のperiod_endとは異なる。四半期は今期
+    -- 通期・本決算は次期通期を指す。ir_disclosure_kessan_facts.run参照、2026-10-03追加)。
+    try_cast(forecast_period_end as date)                       as forecast_period_end,
 
     try_cast(_loaded_at as timestamptz)                         as _loaded_at
 from {{ source('landing', 'ir_disclosure_kessan_facts') }}

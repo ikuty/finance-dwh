@@ -296,6 +296,7 @@ class FactRow:
     forecast_net_income: str | None
     forecast_net_income_yoy_pct: str | None
     forecast_eps: str | None
+    forecast_period_end: str | None
 
 
 FACT_COLUMNS = [f.name for f in fields(FactRow)]
@@ -347,6 +348,17 @@ def run(
     accounting_standard = parse_accounting_standard(title) or "jgaap"
     fye = parse_fiscal_year_end(title)
     period_end = compute_period_end(fye[0], fye[1], period_type) if fye else None
+    # forecast_epsが指す対象期間(forecast_period_end)は、当該開示自身の期間
+    # (period_end)とは異なる(2026-10-03にmart設計で判明、実データで検証済み)。
+    # 四半期決算短信(q1/q2_half/q3)の「３．業績予想」は今期進行中の通期予想
+    # (タイトルと同じFYE)だが、本決算(annual)の予想は次期の通期予想(FYE+1年)
+    # になる(実機確認: クラウディアHD「2026年8月期」本体の予想セクションは
+    # 「2027年8月期の連結業績予想」)。
+    if fye:
+        forecast_fye_year = fye[0] + 1 if period_type == "annual" else fye[0]
+        forecast_period_end = compute_period_end(forecast_fye_year, fye[1], "annual")
+    else:
+        forecast_period_end = None
 
     out: dict[str, str | None] = {}
 
@@ -427,6 +439,7 @@ def run(
     _explicit = {
         "docid", "edinet_code", "sec_code", "extraction_status", "period_type",
         "consolidation", "accounting_standard", "fiscal_period_label", "period_end",
+        "forecast_period_end",
     }
     kwargs = {f.name: out.get(f.name) for f in fields(FactRow) if f.name not in _explicit}
     return FactRow(
@@ -439,5 +452,6 @@ def run(
         accounting_standard=accounting_standard,
         fiscal_period_label=fiscal_period_label,
         period_end=period_end,
+        forecast_period_end=forecast_period_end,
         **kwargs,
     )

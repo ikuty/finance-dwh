@@ -146,3 +146,61 @@ models:
         description: "adj_ratioを掛けて当該取引日の株式数基準に換算した1株当たり配当額。"
       - name: dividend_yield
         description: "配当利回り＝dividend_per_share_adjusted / close。"
+
+  - name: mart__jpx_edinet__quarterly_fundamentals
+    description: >
+      EDINET由来(有報/半期報告書)とir-disclosure-dl由来(決算短信)の実績値を1本に
+      まとめたmart（毎回フルrebuild、Parquet、2026-10-03新設）。2024年4月の制度
+      改正で四半期報告書のEDINET提出が廃止され恒常的にQ1/Q3の空白があること、
+      および有報・半期報告書自体のEDINET提出ラグ（実測: 有報は期末後中央値85日、
+      半期報告書は44日）を、決算短信（期末後約25〜30日で開示）で埋める。
+
+      行はUNION ALLのみで統合・削除しない（1行=1開示。同じ(edinet_code,
+      period_end)にEDINET・ir_disclosure両方の行が存在する場合も両方残る）。
+      当初、企業単位でforecast_epsを全行に付与する設計を試みたが、2021年等の
+      古いEDINET実績行に2026年開示の予想が付いてしまう先読みバイアスを実機で
+      確認し撤回した。forecast_eps/forecast_period_endは、それを実際に記載した
+      ir_disclosure由来の行自身にのみ残る。
+    columns:
+      - name: edinet_code
+        description: "EDINETコード。"
+        data_tests: [not_null]
+      - name: sec_code
+        description: "銘柄コード。"
+      - name: jpx_code
+        description: "銘柄コード（JPX、4桁。sec_codeの先頭4桁）。"
+      - name: period_end
+        description: "対象期間の終了日。"
+        data_tests: [not_null]
+      - name: period_type
+        description: >
+          'annual'/'half'（EDINET側の表記そのまま）、'q1'/'q2_half'/'q3'（決算短信
+          側の表記そのまま）。語彙を統一していないため、期間の同一性判定は
+          period_type文字列ではなく(edinet_code, period_end)で行うこと。
+      - name: source
+        description: "'edinet' / 'ir_disclosure'。この行の実績値がどちら由来か。"
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["edinet", "ir_disclosure"]
+      - name: is_preferred_actuals
+        description: >
+          同じ(edinet_code, period_end)の中で「この期間の確定値として使うべき
+          1行」ならtrue（EDINET優先、無ければ開示が最も新しいもの）。期間ごとに
+          重複無く1行だけ選びたい場合はwhere is_preferred_actuals で絞ること。
+      - name: disclosed_at
+        description: >
+          開示日時。EDINET由来はsubmit_date_time、ir_disclosure由来はTDnet検知日
+          (file_date、時刻粒度は日単位)。株価等と組み合わせる際は先読みバイアス
+          回避のためperiod_endでなくこちらを基準にすること。
+      - name: eps
+        description: "実績EPS。sourceがedinetなら確定値、ir_disclosureなら決算短信の実績値。"
+      - name: bps / shares_outstanding / dividend_per_share
+        description: "EDINET由来の行のみ値が入る（ir_disclosure由来はNULL、決算短信から構造化していないため）。"
+      - name: forecast_eps
+        description: >
+          この行(ir_disclosure由来のみ)の決算短信に記載された会社予想EPS
+          （EDINETには存在しない値）。非開示の場合NULL。他の行・他の期間への
+          転記は行わない（先読みバイアス回避、モデルSQL冒頭コメント参照）。
+      - name: forecast_period_end
+        description: "forecast_epsが対象とする期間の期末日（この行自身のperiod_endとは異なる、cleansed__ir_disclosure__kessan_tanshin.forecast_period_end参照）。"

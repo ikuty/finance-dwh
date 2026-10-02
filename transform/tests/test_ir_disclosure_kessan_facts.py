@@ -201,6 +201,9 @@ def test_run_niitaka_q1_consolidated_jgaap() -> None:
     assert row.forecast_ordinary_income == "1850"
     assert row.forecast_net_income == "1285"
     assert row.forecast_eps == "222.38"
+    # 四半期の予想対象は今期進行中の通期(タイトルと同じFYE)。実データ確認済み
+    # （「３．2027年５月期の連結業績予想」、タイトルも「2027年５月期」）。
+    assert row.forecast_period_end == "2027-05-31"
 
 
 # --- run(): 本決算(連結・日本基準・CF含む)、実機確認済みテキスト(クラウディアHD) --------
@@ -265,6 +268,9 @@ def test_run_kuraudia_annual_consolidated_jgaap_with_cf_and_combined_eps_header(
     assert row.cf_financing == "-687"
     assert row.cf_cash_end == "1800"
     assert row.forecast_eps == "60.45"
+    # 本決算の予想対象は次期の通期(FYE+1年)。実データ確認済み
+    # （「３．2027年8月期の連結業績予想」、本体タイトルは「2026年8月期」）。
+    assert row.forecast_period_end == "2027-08-31"
 
 
 # --- run(): 半角の節番号(「1.」「(2)」等)を使う企業、実機確認済みテキスト(ハイレックス) -
