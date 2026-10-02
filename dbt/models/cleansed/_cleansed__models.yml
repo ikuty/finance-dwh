@@ -257,5 +257,11 @@ models:
         description: "税引前利益(IFRS/米国基準のみ)。経常利益と概念が異なるため列を分けている。"
       - name: forecast_eps
         description: "会社予想の通期EPS(本サービスの主目的の値)。非開示の場合NULL。"
+      - name: forecast_period_end
+        description: >
+          forecast_epsが指す対象期間の期末日（当該開示自身のperiod_endとは異なる、
+          2026-10-03追加）。四半期決算短信(q1/q2_half/q3)は今期進行中の通期を指すが、
+          本決算(annual)は次期の通期を指す（実機確認: クラウディアHD「2026年8月期」
+          本体の予想セクションは「2027年8月期の連結業績予想」）。
       - name: _loaded_at
         description: "DWH取り込み時刻(UTC)。"
