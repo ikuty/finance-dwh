@@ -28,6 +28,10 @@
 -- period_endではなくこちらを基準にする（mart__edinet__financial_indicators.
 -- submit_date_timeと同じ方針）。ir-disclosure側はTDnet検知日(file_date)を
 -- 開示日時の近似として用いる。
+--
+-- 金額列(sales)の単位は常に円（2026-10-04修正）: ir-disclosure側のcleansed層
+-- （決算短信PDFの「百万円未満切捨て」表記のまま数値化、百万円単位）をここで
+-- 1,000,000倍して円に揃える。EDINET側は元々円のため変換不要。
 
 {{ config(
     materialized='external',
@@ -64,7 +68,14 @@ ir_disclosure_actuals as (
         cast(file_date as timestamp)               as disclosed_at,
         eps_actual                                 as eps,
         cast(null as decimal(38, 4))               as bps,
-        sales,
+        -- 決算短信の金額欄は「百万円未満切捨て」表記のため、cleansed層は印字
+        -- された数値のまま保持している(円への換算はしていない、PDFの生表示を
+        -- そのまま保持するcleansed層の責務方針)。EDINET側(sales等)は円そのまま
+        -- のため、このmartで比較可能にするにはここで百万円→円に換算する必要が
+        -- ある(2026-10-04発見・修正: 積水ハウスの実データで、同一期間・同一EPS
+        -- にも関わらずsalesがEDINET側1,965,644,000,000・ir_disclosure側
+        -- 1,965,644と100万倍食い違っていた)。
+        sales * 1000000                            as sales,
         cast(null as decimal(38, 4))               as shares_outstanding,
         cast(null as decimal(38, 4))               as dividend_per_share,
         forecast_eps,
