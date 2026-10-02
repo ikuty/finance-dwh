@@ -12,6 +12,13 @@
 -- 開示予定日に関するお知らせ)は財務数値列が全てNULLのまま残る。本体以外を
 -- 除外せず残しているのは、後段で「このdocidは訂正として処理済み」等の存在
 -- 確認に使えるようにするため(レイク層・landing層と同じ「解釈しすぎない」方針)。
+--
+-- edinet_code/sec_code・period_end(2026-10-03追加): EDINET由来のmart
+-- （mart__jpx_edinet__disclosed_fundamentals等）と企業・期間単位で結合できる
+-- ようにするための列。period_endはタイトルの決算期末月とperiod_typeから逆算した
+-- 実日付(ir_disclosure_kessan_facts.compute_period_end参照、実データ3件で検証済み)。
+-- 「2026年5月8日期」のような月末以外が期末日の変則決算はparse_fiscal_year_endが
+-- Noneを返しperiod_endもNULLになる(既知の制限)。
 
 {{ config(
     materialized='external',
@@ -22,11 +29,14 @@
 select
     cast(file_date as date)                                   as file_date,
     docid,
+    edinet_code,
+    sec_code,
     extraction_status,
     period_type,
     consolidation,
     accounting_standard,
     fiscal_period_label,
+    try_cast(period_end as date)                              as period_end,
 
     try_cast(sales as decimal(20, 4))                         as sales,
     try_cast(sales_prior as decimal(20, 4))                   as sales_prior,
