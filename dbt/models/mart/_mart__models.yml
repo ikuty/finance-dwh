@@ -194,7 +194,13 @@ models:
           (file_date、時刻粒度は日単位)。株価等と組み合わせる際は先読みバイアス
           回避のためperiod_endでなくこちらを基準にすること。
       - name: eps
-        description: "実績EPS。sourceがedinetなら確定値、ir_disclosureなら決算短信の実績値。"
+        description: "実績EPS。sourceがedinetなら確定値、ir_disclosureなら決算短信の実績値。単位は円/株でsourceによらず共通。"
+      - name: sales
+        description: >
+          売上高（単位は円でsourceによらず共通）。ir_disclosure由来は
+          cleansed__ir_disclosure__kessan_tanshin.sales（決算短信の「百万円未満
+          切捨て」表記のまま、百万円単位）を1,000,000倍して円に換算している
+          （2026-10-04修正、モデルSQL冒頭コメント参照）。
       - name: bps / shares_outstanding / dividend_per_share
         description: "EDINET由来の行のみ値が入る（ir_disclosure由来はNULL、決算短信から構造化していないため）。"
       - name: forecast_eps
