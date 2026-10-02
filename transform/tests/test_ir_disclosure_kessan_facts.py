@@ -68,6 +68,52 @@ def test_parse_accounting_standard() -> None:
     assert m.parse_accounting_standard("2026年8月期 決算短信〔日本基準〕（連結）") == "jgaap"
 
 
+# --- parse_fiscal_year_end / compute_period_end -------------------------------------------
+
+
+def test_parse_fiscal_year_end_western_year() -> None:
+    assert m.parse_fiscal_year_end("2027年５月期第１四半期決算短信〔日本基準〕（連結）") == (2027, 5)
+
+
+def test_parse_fiscal_year_end_half_width_year_full_width_month() -> None:
+    # 実機確認(2026-09-30): 年が半角・月が全角の混在表記がある
+    assert m.parse_fiscal_year_end("2026年５月期  決算短信〔ＩＦＲＳ〕（連結）") == (2026, 5)
+
+
+def test_parse_fiscal_year_end_era_year() -> None:
+    # 令和1年=2019年。令和8年10月期 -> 2026年10月
+    assert m.parse_fiscal_year_end("令和８年10月期第３四半期決算短信〔日本基準〕(連結)") == (2026, 10)
+
+
+def test_parse_fiscal_year_end_returns_none_for_irregular_fiscal_date() -> None:
+    # 実機確認(2026-09-30、トーシンHD): 月末以外が期末日の変則決算は対象外
+    assert m.parse_fiscal_year_end("2026年5月8日期 決算短信〔日本基準〕（連結）") is None
+
+
+def test_compute_period_end_q1_counts_back_nine_months_from_fye() -> None:
+    # 実機確認済み(2026-09-30、ニイタカ): 5月期Q1 = 2026年６月１日～2026年８月31日
+    assert m.compute_period_end(2027, 5, "q1") == "2026-08-31"
+
+
+def test_compute_period_end_q2_half_counts_back_six_months_from_fye() -> None:
+    # 実機確認済み(2026-09-30、coly): 1月期中間期 = 2026年２月１日～2026年７月31日
+    assert m.compute_period_end(2027, 1, "q2_half") == "2026-07-31"
+
+
+def test_compute_period_end_annual_equals_fye_itself() -> None:
+    # 実機確認済み(2026-09-30、クラウディアHD): 8月期本決算 = 2025年9月1日～2026年8月31日
+    assert m.compute_period_end(2026, 8, "annual") == "2026-08-31"
+
+
+def test_compute_period_end_handles_year_rollunder() -> None:
+    # 1月期Q1: 期首は前年2月、Q1末は前年4月末
+    assert m.compute_period_end(2027, 1, "q1") == "2026-04-30"
+
+
+def test_compute_period_end_returns_none_for_unknown_period_type() -> None:
+    assert m.compute_period_end(2027, 5, None) is None
+
+
 # --- _normalize_number -------------------------------------------------------------------
 
 
@@ -125,8 +171,14 @@ _NIITAKA_Q1_TEXT = """\
 
 
 def test_run_niitaka_q1_consolidated_jgaap() -> None:
-    row = m.run(_NIITAKA_Q1_TEXT, "docid001", "2027年５月期第１四半期決算短信〔日本基準〕（連結）")
+    row = m.run(
+        _NIITAKA_Q1_TEXT, "docid001", "2027年５月期第１四半期決算短信〔日本基準〕（連結）",
+        edinet_code="E12345", sec_code="43650",
+    )
     assert row.extraction_status == "ok"
+    assert row.edinet_code == "E12345"
+    assert row.sec_code == "43650"
+    assert row.period_end == "2026-08-31"
     assert row.period_type == "q1"
     assert row.consolidation == "consolidated"
     assert row.accounting_standard == "jgaap"
@@ -197,6 +249,7 @@ _KURAUDIA_ANNUAL_TEXT = """\
 def test_run_kuraudia_annual_consolidated_jgaap_with_cf_and_combined_eps_header() -> None:
     row = m.run(_KURAUDIA_ANNUAL_TEXT, "docid002", "2026年8月期 決算短信〔日本基準〕（連結）")
     assert row.extraction_status == "ok"
+    assert row.period_end == "2026-08-31"
     assert row.period_type == "annual"
     assert row.sales == "13880"
     assert row.operating_income == "632"
@@ -262,6 +315,7 @@ def test_run_handles_half_width_section_markers() -> None:
         _HALF_WIDTH_SECTION_TEXT, "docid003", "2026年10月期 第3四半期決算短信〔日本基準〕（連結）"
     )
     assert row.extraction_status == "ok"
+    assert row.period_end == "2026-07-31"
     assert row.sales == "320556"
     assert row.operating_income == "3882"
     assert row.net_income == "40842"
@@ -300,6 +354,7 @@ def test_run_handles_era_year_abbreviated_in_data_rows() -> None:
 ７年10月期 6,354 3,532 55.6"""
     row = m.run(text, "docid004", "令和８年10月期第３四半期決算短信〔日本基準〕(連結)")
     assert row.extraction_status == "ok"
+    assert row.period_end == "2026-07-31"
     assert row.sales == "2424"
     assert row.operating_income == "158"
     assert row.net_income == "141"
@@ -343,6 +398,7 @@ def test_run_ifrs_forecast_section_has_fewer_columns_than_actuals() -> None:
 通期 51,000 0.8 3,000 △17.8 2,900 △19.8 1,900 △19.3 152.53"""
     row = m.run(text, "docid005", "2027年４月期第１四半期決算短信〔ＩＦＲＳ〕(連結)")
     assert row.extraction_status == "ok"
+    assert row.period_end == "2026-07-31"
     assert row.accounting_standard == "ifrs"
     assert row.sales == "12000"
     assert row.operating_income == "900"
@@ -391,6 +447,7 @@ def test_run_handles_spaced_forecast_row_label() -> None:
 通 期 1,500 41.6 400 70.5 350 59.9 307 56.6 277 8.1 41.43"""
     row = m.run(text, "docid006", "2027年１月期決算短信〔日本基準〕（連結）")
     assert row.extraction_status == "ok"
+    assert row.period_end == "2027-01-31"
     # EPSは常に行末のトークンのため、列が標準(4メトリクス)より多い場合でも
     # forecast_epsだけは正しく取れる(個別の予想利益列は非標準フォーマットのため
     # ずれる可能性があることは許容する、既知の制約)。
@@ -420,6 +477,7 @@ def test_run_without_forecast_section_leaves_forecast_fields_none() -> None:
 通期業績予想につきましては、合理的な算定が困難であるため記載しておりません。"""
     row = m.run(text, "docid007", "2026年５月期決算短信〔日本基準〕（連結）")
     assert row.extraction_status == "ok"
+    assert row.period_end == "2026-05-31"
     assert row.sales == "9000"
     assert row.forecast_eps is None
     assert row.forecast_sales is None
@@ -429,7 +487,15 @@ def test_run_without_forecast_section_leaves_forecast_fields_none() -> None:
 
 
 def test_run_correction_returns_empty_row_without_parsing() -> None:
-    row = m.run("本文は自由記述で財務数値テーブルを持たない", "docid008", "（訂正）「決算短信」の一部訂正について")
+    row = m.run(
+        "本文は自由記述で財務数値テーブルを持たない", "docid008", "（訂正）「決算短信」の一部訂正について",
+        edinet_code="E99999", sec_code="99990",
+    )
     assert row.extraction_status == "correction"
+    # 企業識別子は本体以外のサブタイプでも保持する(「このdocidは訂正として処理
+    # 済み」等の存在確認に使えるようにするため)。
+    assert row.edinet_code == "E99999"
+    assert row.sec_code == "99990"
+    assert row.period_end is None
     assert row.sales is None
     assert row.forecast_eps is None

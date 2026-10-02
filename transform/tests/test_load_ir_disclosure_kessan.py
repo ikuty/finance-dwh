@@ -147,6 +147,11 @@ def test_load_one_writes_text_and_facts_with_loaded_at(
     assert facts_row["docid"] == "docABC"
     assert facts_row["file_date"] == "2026-09-10"
     assert facts_row["period_type"] == "q1"
+    # メタデータJSONのedinet_code/sec_codeがFactRowまで素通しされること
+    # (2026-10-03追加、EDINET由来のmartと企業単位で結合するためのキー)。
+    assert facts_row["edinet_code"] == "E00012"
+    assert facts_row["sec_code"] == "13010"
+    assert facts_row["period_end"] == "2026-08-31"
     assert facts_row["_loaded_at"] is not None
     datetime.datetime.fromisoformat(str(facts_row["_loaded_at"]))
 

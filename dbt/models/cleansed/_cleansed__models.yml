@@ -226,6 +226,13 @@ models:
       - name: docid
         description: "JPX上場会社情報サービス側のPDF文書ID（ir-disclosure-dlのraw配下のファイル名）。"
         data_tests: [not_null, unique]
+      - name: edinet_code
+        description: >
+          提出企業のEDINETコード（ir-disclosure-dlのメタデータJSON由来の素通し）。
+          mart__jpx_edinet__disclosed_fundamentals等、EDINET由来のmartと企業単位
+          で結合するためのキー（2026-10-03追加）。
+      - name: sec_code
+        description: "証券コード（5桁、EDINETのsec_codeと同じ形式）。"
       - name: extraction_status
         description: "'ok' / 'correction' / 'supplementary' / 'review_notice' / 'schedule_notice'。"
         data_tests:
@@ -238,6 +245,12 @@ models:
         description: "'consolidated' / 'non_consolidated'。"
       - name: accounting_standard
         description: "'jgaap' / 'ifrs' / 'us_gaap'。"
+      - name: period_end
+        description: >
+          期間末日（実日付）。タイトルの決算期末月とperiod_typeから逆算して算出
+          （2026-10-03追加、ir_disclosure_kessan_facts.compute_period_end参照）。
+          mart__jpx_edinet__disclosed_fundamentals.period_endと同じ意味の列で、
+          時系列での整列・結合に使う。月末以外が期末日の変則決算はNULL（既知の制限）。
       - name: ordinary_income
         description: "経常利益(日本基準のみ、IFRS/米国基準はincome_before_taxを参照)。"
       - name: income_before_tax

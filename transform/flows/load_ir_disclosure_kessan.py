@@ -154,10 +154,12 @@ def load_one(lake_root: Path, landing_root: Path, date: str) -> int:
     for pdf_path, meta in pdfs:
         docid = pdf_path.stem
         title = meta.get("jpx_title") or meta.get("tdnet_title") or ""
+        edinet_code = meta.get("edinet_code")
+        sec_code = meta.get("sec_code")
         text = pdf_stage.extract_text(pdf_path)
         docids.append(docid)
         texts.append(text)
-        facts.append(facts_stage.run(text, docid, title))
+        facts.append(facts_stage.run(text, docid, title, edinet_code=edinet_code, sec_code=sec_code))
 
     text_tbl = pa.table({
         "file_date": pa.array([date] * len(docids), type=pa.string()),

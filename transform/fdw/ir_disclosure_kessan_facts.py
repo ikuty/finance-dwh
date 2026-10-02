@@ -31,6 +31,7 @@ Stage1(ir_disclosure_kessan_pdf.py)の後段。ビジネスロジック(サブ�
 
 from __future__ import annotations
 
+import calendar
 import re
 from dataclasses import dataclass, fields
 
@@ -73,6 +74,44 @@ def parse_period_type(title: str) -> str | None:
     if "四半期" not in title:
         return "annual"
     return None
+
+
+# 決算期末の年・月(「2026年５月期」全角/半角混在可、「令和８年10月期」元号)を
+# タイトルから抽出する。「2026年5月8日期」のような月末以外が期末日の変則決算
+# (実機確認、トーシンHD)は対象外(Noneを返す、既知の制限)。
+_FYE_ERA_RE = re.compile(r"令和(?P<era_year>\d{1,2})年(?P<month>\d{1,2})月期")
+_FYE_RE = re.compile(r"(?P<year>\d{4})年(?P<month>\d{1,2})月期")
+
+# 決算期末からperiod_typeに応じて何ヶ月遡るか(四半期は決算期末からの逆算で求める。
+# 実機確認2026-09-30の実データ3件で検証済み: 5月期Q1「2026年６月１日～2026年８月
+# 31日」、1月期中間期「2026年２月１日～2026年７月31日」、8月期本決算
+# 「2025年9月1日～2026年8月31日」。ニイタカ・coly・クラウディアHDそれぞれ参照)。
+_PERIOD_TYPE_OFFSET_MONTHS = {"q1": 9, "q2_half": 6, "q3": 3, "annual": 0}
+
+
+def parse_fiscal_year_end(title: str) -> tuple[int, int] | None:
+    """タイトルから決算期末の西暦年・月を返す((year, month))。元号年は
+    本文データ行と同じ変換規則(令和1年=2019年)。見つからなければNone。"""
+    m = _FYE_ERA_RE.search(title)
+    if m:
+        return (2018 + int(m.group("era_year")), int(m.group("month")))
+    m = _FYE_RE.search(title)
+    if m:
+        return (int(m.group("year")), int(m.group("month")))
+    return None
+
+
+def compute_period_end(fye_year: int, fye_month: int, period_type: str | None) -> str | None:
+    """決算期末(fye_year年fye_month月の月末)とperiod_typeから、実際の期間末日
+    (ISO形式文字列 YYYY-MM-DD)を計算する。"""
+    if period_type not in _PERIOD_TYPE_OFFSET_MONTHS:
+        return None
+    offset = _PERIOD_TYPE_OFFSET_MONTHS[period_type]
+    total_months = fye_year * 12 + (fye_month - 1) - offset
+    year, month = divmod(total_months, 12)
+    month += 1
+    last_day = calendar.monthrange(year, month)[1]
+    return f"{year:04d}-{month:02d}-{last_day:02d}"
 
 
 def parse_consolidation(title: str) -> str | None:
@@ -204,11 +243,14 @@ class FactRow:
     (数値は正規化済みの文字列、最終的な型付けはcleansed層のtry_cast)。"""
 
     docid: str
+    edinet_code: str | None
+    sec_code: str | None
     extraction_status: str
     period_type: str | None
     consolidation: str | None
     accounting_standard: str | None
     fiscal_period_label: str | None
+    period_end: str | None
 
     sales: str | None
     sales_prior: str | None
@@ -259,9 +301,15 @@ class FactRow:
 FACT_COLUMNS = [f.name for f in fields(FactRow)]
 
 
-def _empty_row(docid: str, extraction_status: str) -> FactRow:
-    kwargs = {f.name: None for f in fields(FactRow) if f.name not in ("docid", "extraction_status")}
-    return FactRow(docid=docid, extraction_status=extraction_status, **kwargs)
+def _empty_row(
+    docid: str, edinet_code: str | None, sec_code: str | None, extraction_status: str
+) -> FactRow:
+    _explicit = {"docid", "edinet_code", "sec_code", "extraction_status"}
+    kwargs = {f.name: None for f in fields(FactRow) if f.name not in _explicit}
+    return FactRow(
+        docid=docid, edinet_code=edinet_code, sec_code=sec_code,
+        extraction_status=extraction_status, **kwargs,
+    )
 
 
 def _assign_results_row(
@@ -280,11 +328,16 @@ def _assign_results_row(
             out[f"{col}_yoy_pct"] = pct
 
 
-def run(text: str, docid: str, title: str) -> FactRow:
-    """テキスト全体からFactRowを組み立てる便利関数。"""
+def run(
+    text: str, docid: str, title: str, edinet_code: str | None = None, sec_code: str | None = None
+) -> FactRow:
+    """テキスト全体からFactRowを組み立てる便利関数。edinet_code/sec_codeは
+    ir-disclosure-dlのメタデータJSONから渡される企業識別子で、この関数自身は
+    解釈しない(素通し)。EDINET側のmart（mart__jpx_edinet__disclosed_fundamentals
+    等）とedinet_codeで結合できるようにするため(2026-10-03追加)。"""
     status = classify_title(title)
     if status != "genuine":
-        return _empty_row(docid, status)
+        return _empty_row(docid, edinet_code, sec_code, status)
 
     lines = text.split("\n")
     bounds = _find_section_bounds(lines)
@@ -292,6 +345,8 @@ def run(text: str, docid: str, title: str) -> FactRow:
     period_type = parse_period_type(title)
     consolidation = parse_consolidation(title)
     accounting_standard = parse_accounting_standard(title) or "jgaap"
+    fye = parse_fiscal_year_end(title)
+    period_end = compute_period_end(fye[0], fye[1], period_type) if fye else None
 
     out: dict[str, str | None] = {}
 
@@ -370,16 +425,19 @@ def run(text: str, docid: str, title: str) -> FactRow:
             break
 
     _explicit = {
-        "docid", "extraction_status", "period_type", "consolidation",
-        "accounting_standard", "fiscal_period_label",
+        "docid", "edinet_code", "sec_code", "extraction_status", "period_type",
+        "consolidation", "accounting_standard", "fiscal_period_label", "period_end",
     }
     kwargs = {f.name: out.get(f.name) for f in fields(FactRow) if f.name not in _explicit}
     return FactRow(
         docid=docid,
+        edinet_code=edinet_code,
+        sec_code=sec_code,
         extraction_status="ok",
         period_type=period_type,
         consolidation=consolidation,
         accounting_standard=accounting_standard,
         fiscal_period_label=fiscal_period_label,
+        period_end=period_end,
         **kwargs,
     )
