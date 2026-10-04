@@ -34,13 +34,25 @@
 --     adj_ratio = period_end_cum_adj / file_date_cum_adj
 --     eps_adjusted = eps × adj_ratio
 --     bps_adjusted = bps × adj_ratio
---   発行済株式数は逆方向（分割で株数が増える）のため、adj_ratioの逆数を掛ける:
---     shares_outstanding_adjusted = shares_outstanding / adj_ratio
---   （分割・併合が対象取引日までに無ければ両cum_adjは等しくadj_ratio=1、無調整。
---   検証: 1:2分割(adj_factor=0.5)の場合、period_end基準cum_adj=0.5・file_date基準
---   cum_adj=1.0(分割後)ならadj_ratio=0.5、eps_adjustedは半分（1株あたりの分母である
---   株数が倍になるため妥当）、shares_outstanding_adjustedは2倍（実際に株数が倍に
---   なるため妥当）と、符号・方向とも整合することを確認済み）。
+--
+--   発行済株式数は別の基準日を使う(2026-10-04修正、重要): 上のperiod_end_cum_adj/
+--   file_date_cum_adjはex_rights_date（権利落ち日、株価が調整後水準になる日）
+--   基準だが、発行済株式数は分割・併合の効力発生日(effective_date、実際に株式数
+--   が変わる日)基準で調整する必要がある。この2つの基準日は通常1〜3日ズレ、
+--   決算期末日がちょうどこの隙間（ex_rights_date ≦ period_end ＜ effective_date）
+--   に入ると、株価用の係数を発行済株式数に流用した場合に調整漏れが起きる（実データ
+--   で確認: NTT 2023年6月期・KDDI 2025年3月期ほか、全期間で781件の開示が該当。
+--   多くの企業が決算期末の翌月1日を分割の効力発生日に設定するため構造的に頻発
+--   する）。そのためshares_outstanding専用にshares_adj_ratioを使う:
+--     shares_adj_ratio = shares_period_end_cum_adj / shares_file_date_cum_adj
+--     shares_outstanding_adjusted = shares_outstanding / shares_adj_ratio
+--   （market_cap/psrもこのshares_outstanding_adjustedを使うため同様に修正。
+--   分割・併合が対象取引日までに無ければ両shares_cum_adjは等しくshares_adj_ratio=1、
+--   無調整。検証: 1:2分割(adj_factor=0.5)の場合、period_end基準cum_adj=0.5・
+--   file_date基準cum_adj=1.0(分割後)ならadj_ratio=0.5、eps_adjustedは半分
+--   （1株あたりの分母である株数が倍になるため妥当）、shares_outstanding_adjusted
+--   は2倍（実際に株数が倍になるため妥当）と、符号・方向とも整合することを
+--   確認済み）。
 --
 -- sales（売上高）・trading_value等、企業単位の総額指標は株式数に依存しないため
 -- 調整不要（disclosed値をそのまま使う）。
@@ -75,14 +87,16 @@ with prices as (
         code,
         file_date,
         coalesce(pm_close, am_close) as close,
-        cum_adjustment_factor as file_date_cum_adj
+        cum_adjustment_factor as file_date_cum_adj,
+        shares_cum_adjustment_factor as shares_file_date_cum_adj
     from {{ ref('intermediate__jpx__daily_prices_adjusted') }}
 ),
 
 fundamentals as (
     select
         jpx_code, doc_id, submit_date_time,
-        eps, bps, sales, shares_outstanding, dividend_per_share, period_end_cum_adj
+        eps, bps, sales, shares_outstanding, dividend_per_share,
+        period_end_cum_adj, shares_period_end_cum_adj
     from {{ ref('mart__jpx_edinet__disclosed_fundamentals') }}
 ),
 
@@ -93,9 +107,10 @@ daily as (
         p.file_date,
         p.close,
         p.file_date_cum_adj,
+        p.shares_file_date_cum_adj,
         f.doc_id,
         f.eps, f.bps, f.sales, f.shares_outstanding, f.dividend_per_share,
-        f.period_end_cum_adj
+        f.period_end_cum_adj, f.shares_period_end_cum_adj
     from prices p
     asof left join fundamentals f
         on p.code = f.jpx_code
@@ -109,22 +124,24 @@ select
     doc_id,
     case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then period_end_cum_adj / file_date_cum_adj end as adj_ratio,
+    case when shares_period_end_cum_adj is not null and shares_file_date_cum_adj is not null and shares_file_date_cum_adj != 0
+        then shares_period_end_cum_adj / shares_file_date_cum_adj end as shares_adj_ratio,
     case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then eps * period_end_cum_adj / file_date_cum_adj end as eps_adjusted,
     case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then bps * period_end_cum_adj / file_date_cum_adj end as bps_adjusted,
-    case when period_end_cum_adj is not null and file_date_cum_adj is not null and period_end_cum_adj != 0
-        then shares_outstanding * file_date_cum_adj / period_end_cum_adj end as shares_outstanding_adjusted,
+    case when shares_period_end_cum_adj is not null and shares_file_date_cum_adj is not null and shares_period_end_cum_adj != 0
+        then shares_outstanding * shares_file_date_cum_adj / shares_period_end_cum_adj end as shares_outstanding_adjusted,
     case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then dividend_per_share * period_end_cum_adj / file_date_cum_adj end as dividend_per_share_adjusted,
     case when bps is not null and bps != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then close / (bps * period_end_cum_adj / file_date_cum_adj) end as pbr,
     case when eps is not null and eps != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then close / (eps * period_end_cum_adj / file_date_cum_adj) end as per,
-    case when shares_outstanding is not null and period_end_cum_adj is not null and file_date_cum_adj is not null and period_end_cum_adj != 0
-        then close * (shares_outstanding * file_date_cum_adj / period_end_cum_adj) end as market_cap,
-    case when sales is not null and sales != 0 and shares_outstanding is not null and period_end_cum_adj is not null and file_date_cum_adj is not null and period_end_cum_adj != 0
-        then (close * (shares_outstanding * file_date_cum_adj / period_end_cum_adj)) / sales end as psr,
+    case when shares_outstanding is not null and shares_period_end_cum_adj is not null and shares_file_date_cum_adj is not null and shares_period_end_cum_adj != 0
+        then close * (shares_outstanding * shares_file_date_cum_adj / shares_period_end_cum_adj) end as market_cap,
+    case when sales is not null and sales != 0 and shares_outstanding is not null and shares_period_end_cum_adj is not null and shares_file_date_cum_adj is not null and shares_period_end_cum_adj != 0
+        then (close * (shares_outstanding * shares_file_date_cum_adj / shares_period_end_cum_adj)) / sales end as psr,
     case when eps is not null and close is not null and close != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then (eps * period_end_cum_adj / file_date_cum_adj) / close end as earnings_yield,
     case when dividend_per_share is not null and close is not null and close != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0

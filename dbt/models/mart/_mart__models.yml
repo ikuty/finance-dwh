@@ -100,7 +100,16 @@ models:
       - name: eps / bps / sales / shares_outstanding / dividend_per_share
         description: "開示された値そのまま（分割・併合調整前）。mart__edinet__financial_indicatorsと同一。"
       - name: period_end_cum_adj
-        description: "決算期末日(period_end)時点（以前で直近の取引日）の累積調整係数。intermediate__jpx__daily_prices_adjusted.cum_adjustment_factorをASOF JOINで取得。"
+        description: "決算期末日(period_end)時点（以前で直近の取引日）の累積調整係数(権利落ち日基準)。intermediate__jpx__daily_prices_adjusted.cum_adjustment_factorをASOF JOINで取得。EPS/BPS/1株配当の調整に使う。"
+      - name: shares_period_end_cum_adj
+        description: >
+          決算期末日(period_end)時点の累積調整係数(分割・併合の効力発生日
+          effective_date基準、2026-10-04追加)。period_end_cum_adjは権利落ち日基準
+          のためEPS/BPSには正しいが、発行済株式数は効力発生日基準で調整する必要があり
+          (決算期末日がその間に入ると調整漏れが起きる、実データでNTT・KDDI等781件
+          確認)、shares_outstanding専用にこちらを使う。
+          intermediate__jpx__daily_prices_adjusted.shares_cum_adjustment_factorを
+          ASOF JOINで取得。
 
   - name: mart__jpx_edinet__daily_valuation_indicators
     description: >
@@ -122,11 +131,17 @@ models:
       - name: doc_id
         description: "この取引日時点で「参照可能な最新の開示」と判定された書類のID。fiscal_year/period_type/submit_date_time等の開示メタデータや、eps/bps/sales/shares_outstanding/dividend_per_shareの無調整値が必要な場合はmart__jpx_edinet__disclosed_fundamentalsとdoc_idで結合する。"
       - name: adj_ratio
-        description: "決算期末日時点の累積調整係数 ÷ 当該取引日の累積調整係数。分割・併合をまたぐ場合のEPS/BPS換算に使う。またがなければ1.0。"
+        description: "決算期末日時点の累積調整係数(権利落ち日基準) ÷ 当該取引日の累積調整係数。分割・併合をまたぐ場合のEPS/BPS換算に使う。またがなければ1.0。"
+      - name: shares_adj_ratio
+        description: >
+          決算期末日時点の累積調整係数(分割・併合の効力発生日基準、
+          shares_period_end_cum_adj) ÷ 当該取引日の同基準の累積調整係数
+          (shares_file_date_cum_adj)。2026-10-04追加。adj_ratioとは基準日が異なり、
+          shares_outstanding_adjusted/market_cap/psrの換算専用。またがなければ1.0。
       - name: eps_adjusted / bps_adjusted
         description: "adj_ratioを掛けて当該取引日の株式数基準に換算したEPS/BPS。"
       - name: shares_outstanding_adjusted
-        description: "adj_ratioの逆数を掛けて当該取引日の株式数基準に換算した発行済株式数。"
+        description: "shares_adj_ratioの逆数を掛けて当該取引日の株式数基準に換算した発行済株式数。"
       - name: pbr
         description: "株価純資産倍率＝close / bps_adjusted。"
       - name: per
