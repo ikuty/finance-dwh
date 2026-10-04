@@ -31,6 +31,9 @@
 -- 多くの企業が決算期末の翌月1日を分割の効力発生日に設定するため構造的に頻発
 -- する）。intermediate__jpx__daily_prices_adjusted.shares_cum_adjustment_factor
 -- （effective_date基準）をASOF JOINで取得する。
+--
+-- headquarters_address/prefecture（2026-10-04追加）: mart__edinet__financial_
+-- indicators経由でcleansed__edinet__headquarters由来の値をそのまま通す。
 
 {{ config(
     materialized='external',
@@ -42,6 +45,7 @@ with edinet as (
     select
         doc_id, edinet_code, sec_code, filer_name, fiscal_year, period_type,
         period_end, submit_date_time, bps, eps, sales, shares_outstanding, dividend_per_share,
+        headquarters_address, prefecture,
         left(sec_code, 4) as jpx_code
     from {{ ref('mart__edinet__financial_indicators') }}
     where sec_code is not null
@@ -62,6 +66,8 @@ select
     e.sales,
     e.shares_outstanding,
     e.dividend_per_share,
+    e.headquarters_address,
+    e.prefecture,
     p.cum_adjustment_factor as period_end_cum_adj,
     p.shares_cum_adjustment_factor as shares_period_end_cum_adj
 from edinet e
