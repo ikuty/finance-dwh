@@ -40,8 +40,14 @@ models:
       - name: code
         data_tests: [not_null]
       - name: ex_rights_date
-        description: "権利落ち日（権利付最終日の翌営業日）。"
+        description: "権利落ち日（権利付最終日の翌営業日）。株価の調整基準日。"
         data_tests: [not_null]
+      - name: effective_date
+        description: >
+          分割・併合の効力発生日（cleansed__mufg__stock_splits/stock_consolidations
+          のeffective_date由来、2026-10-04追加）。発行済株式数が実際に変わる日で、
+          ex_rights_dateとは通常1〜3日ズレる。発行済株式数の調整基準日として使う
+          （詳細はintermediate__jpx__daily_prices_adjustedのモデルコメント参照）。
       - name: adj_factor
         description: "調整係数（ratio_before/ratio_after、分割・併合とも統一的に算出）。"
         data_tests: [not_null]
@@ -60,7 +66,14 @@ models:
       - name: file_date
         data_tests: [not_null]
       - name: cum_adjustment_factor
-        description: "累積調整係数。対象期間より後に分割・併合が無ければ1.0。"
+        description: "累積調整係数(権利落ち日ex_rights_date基準)。株価の調整に使う。対象期間より後に分割・併合が無ければ1.0。"
+        data_tests: [not_null]
+      - name: shares_cum_adjustment_factor
+        description: >
+          累積調整係数(分割・併合の効力発生日effective_date基準、2026-10-04追加)。
+          発行済株式数の調整に使う。ex_rights_date基準のcum_adjustment_factorとは
+          通常1〜3日ズレるため別列にした（詳細はモデルコメント参照）。対象期間より
+          後に分割・併合が無ければ1.0。
         data_tests: [not_null]
 
   - name: intermediate__edinet__jgaap_financial_facts
