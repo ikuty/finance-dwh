@@ -37,6 +37,10 @@ models:
         description: "会計基準（DEI「会計基準、DEI」由来。Japan GAAP/IFRS/US GAAP等）。"
       - name: has_consolidated
         description: "連結決算の有無（DEI「連結決算の有無、DEI」由来）。"
+      - name: headquarters_address
+        description: "本店の所在の場所（cleansed__edinet__headquarters.address_clean由来、2026-10-04追加）。"
+      - name: prefecture
+        description: "本店所在地の都道府県（cleansed__edinet__headquarters.prefecture由来、2026-10-04追加）。ごく少数(0.1%未満)、提出書類自体の誤記等によりNULL。"
       - name: total_assets
         description: "総資産額。連結優先・個別フォールバック、J-GAAP/IFRS/US GAAPをcoalesce。"
       - name: net_assets
@@ -99,6 +103,8 @@ models:
         description: "mart__edinet__financial_indicatorsと同一（詳細はそちらのcolumn定義参照）。"
       - name: eps / bps / sales / shares_outstanding / dividend_per_share
         description: "開示された値そのまま（分割・併合調整前）。mart__edinet__financial_indicatorsと同一。"
+      - name: headquarters_address / prefecture
+        description: "mart__edinet__financial_indicatorsと同一（詳細はそちらのcolumn定義参照）。"
       - name: period_end_cum_adj
         description: "決算期末日(period_end)時点（以前で直近の取引日）の累積調整係数(権利落ち日基準)。intermediate__jpx__daily_prices_adjusted.cum_adjustment_factorをASOF JOINで取得。EPS/BPS/1株配当の調整に使う。"
       - name: shares_period_end_cum_adj

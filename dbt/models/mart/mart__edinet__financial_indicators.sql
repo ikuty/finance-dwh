@@ -30,6 +30,11 @@
 -- 通期は約87〜90日、四半期でも約42〜43日のディスクロージャーラグを確認済み。
 -- 詳細はdocs/mart_indicators.md参照)。mart__jpx_edinet__daily_valuation_indicators
 -- が「その取引日時点で参照可能な最新の開示」を判定するために使用する。
+--
+-- headquarters_address/prefecture列(2026-10-04追加): cleansed__edinet__headquarters
+-- （本店所在地、都道府県）をdoc_idで結合する。外部からcleansedを直接参照させず
+-- martだけで完結させるため(ユーザー判断)、このmartの薄い結合層としての役割に
+-- 1つ追加する形で持たせる。
 
 {{ config(
     materialized='external',
@@ -60,12 +65,19 @@ dei as (
     select * from {{ ref('intermediate__edinet__dei_facts') }}
 ),
 
+hq as (
+    select doc_id, address_clean as headquarters_address, prefecture
+    from {{ ref('cleansed__edinet__headquarters') }}
+),
+
 combined as (
     select
         tp.*,
         d.accounting_standard,
         d.has_consolidated,
         d.shares_outstanding as dei_shares_outstanding,
+        hq.headquarters_address,
+        hq.prefecture,
         jg.total_assets as jg_total_assets, ifrs.total_assets as ifrs_total_assets, us.total_assets as us_total_assets,
         jg.net_assets as jg_net_assets, ifrs.net_assets as ifrs_net_assets, us.net_assets as us_net_assets,
         jg.equity_ratio as jg_equity_ratio, ifrs.equity_ratio as ifrs_equity_ratio, us.equity_ratio as us_equity_ratio,
@@ -88,6 +100,7 @@ combined as (
         jg.dividend_per_share as jg_dividend_per_share, ifrs.dividend_per_share as ifrs_dividend_per_share, us.dividend_per_share as us_dividend_per_share
     from target_periods tp
     left join dei d on d.doc_id = tp.doc_id
+    left join hq on hq.doc_id = tp.doc_id
     left join {{ ref('intermediate__edinet__jgaap_financial_facts') }} jg on jg.doc_id = tp.doc_id
     left join {{ ref('intermediate__edinet__ifrs_financial_facts') }} ifrs on ifrs.doc_id = tp.doc_id
     left join {{ ref('intermediate__edinet__usgaap_financial_facts') }} us on us.doc_id = tp.doc_id
@@ -106,6 +119,8 @@ select
     regime,
     accounting_standard,
     has_consolidated,
+    headquarters_address,
+    prefecture,
     coalesce(
         case when accounting_standard = 'IFRS' then ifrs_total_assets end,
         case when accounting_standard = 'Japan GAAP' then jg_total_assets end,
