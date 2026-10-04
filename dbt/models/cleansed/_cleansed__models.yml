@@ -86,6 +86,28 @@ models:
       - name: form_code
         description: "様式コード（生の値、参考）。"
 
+  - name: cleansed__edinet__headquarters
+    description: >
+      EDINET開示の表紙記載「本店の所在の場所」を書類(doc_id)単位に取り出し、住所
+      文字列から都道府県を分割した型付け版（毎回フル rebuild、Parquet）。粒度は
+      1行=1書類（cleansed__edinet__documentsと同じ）。カバレッジは全書類の94%、
+      有価証券報告書のみなら99.8%（詳細はモデルSQL冒頭コメント参照）。
+    columns:
+      - name: doc_id
+        description: "書類管理番号。"
+        data_tests: [not_null, unique]
+      - name: edinet_code
+        description: "EDINETコード。"
+      - name: address_raw
+        description: "本店の所在の場所の原文字列（EDINET開示の表紙記載そのまま）。"
+      - name: address_clean
+        description: "address_rawから先頭の郵便番号・前後の空白を除去したもの。"
+      - name: prefecture
+        description: >
+          address_cleanの先頭一致から判定した都道府県（47都道府県名、または
+          都道府県を省略した市区町村名の固定対応表による）。提出書類自体の誤記や
+          住所以外の値が入っているケース(全体の0.1%未満)はNULL(推測で補わない)。
+
   - name: cleansed__jpx__stq_prices
     description: >
       JPX 形式C（株式相場表・詳細日次）セクション1（立会市場普通取引）の
