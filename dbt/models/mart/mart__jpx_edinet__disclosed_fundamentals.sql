@@ -18,7 +18,19 @@
 -- ASOF JOINで取得したもの。period_endだけに依存しfile_dateには依存しないため、
 -- この開示grainで一意に決まる（日次grain側のfile_date時点の累積調整係数との比が
 -- adj_ratioになる。詳細はmart__jpx_edinet__daily_valuation_indicatorsのコメント
--- 参照）。
+-- 参照）。EPS/BPS/1株配当の調整に使う（会社が期末後の分割を遡及適用する基準と
+-- ex_rights_date基準が実データ上整合するため）。
+--
+-- shares_period_end_cum_adj（2026-10-04追加、重要）: 発行済株式数の調整専用の
+-- 累積係数。上のperiod_end_cum_adjはex_rights_date（権利落ち日）基準だが、
+-- 発行済株式数は分割・併合の効力発生日(effective_date、実際に株式数が変わる日)
+-- 基準で調整する必要がある。この2つの基準日は通常1〜3日ズレ、決算期末日が
+-- ちょうどこの隙間（ex_rights_date ≦ period_end ＜ effective_date）に入ると、
+-- period_end_cum_adjを発行済株式数に流用した場合に調整漏れが起きる（実データで
+-- 確認: NTT 2023年6月期・KDDI 2025年3月期ほか、全期間で781件の開示が該当。
+-- 多くの企業が決算期末の翌月1日を分割の効力発生日に設定するため構造的に頻発
+-- する）。intermediate__jpx__daily_prices_adjusted.shares_cum_adjustment_factor
+-- （effective_date基準）をASOF JOINで取得する。
 
 {{ config(
     materialized='external',
@@ -50,7 +62,8 @@ select
     e.sales,
     e.shares_outstanding,
     e.dividend_per_share,
-    p.cum_adjustment_factor as period_end_cum_adj
+    p.cum_adjustment_factor as period_end_cum_adj,
+    p.shares_cum_adjustment_factor as shares_period_end_cum_adj
 from edinet e
 asof left join {{ ref('intermediate__jpx__daily_prices_adjusted') }} p
     on e.jpx_code = p.code
