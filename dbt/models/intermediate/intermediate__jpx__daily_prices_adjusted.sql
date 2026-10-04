@@ -16,6 +16,18 @@
 -- 価格×出来高の調整が相殺されるため無調整で正しい）は調整しない（生値のまま）。
 --
 -- 対象期間より後に分割・併合が無い銘柄・期間は累積調整係数=1.0（無調整）となる。
+--
+-- shares_cum_adjustment_factor（発行済株式数調整用、2026-10-04追加）:
+--   上記の累積調整係数(cum_adjustment_factor)はex_rights_date（権利落ち日、株価が
+--   調整後水準になる日）基準で、株価の調整には正しい。しかし発行済株式数は
+--   ex_rights_dateではなく、分割・併合の効力発生日(effective_date、実際に株式数が
+--   変わる日)を基準に調整する必要があり、この2つの日付は通常1〜3日ズレる
+--   （詳細はintermediate__mufg__corporate_actionsのコメント参照）。そのため
+--   同じ考え方でeffective_date基準の累積調整係数を別途算出し、
+--   mart__jpx_edinet__disclosed_fundamentals.shares_period_end_cum_adjと対にして
+--   発行済株式数のみの調整に使う（EPS/BPS等の調整には既存のcum_adjustment_factor
+--   を使い続ける。会社自身が決算短信等でEPS/BPSを期末後の分割について遡及適用
+--   するため、ex_rights_date基準の既存係数と整合することを実データで確認済み）。
 
 {{ config(
     materialized='external',
@@ -34,11 +46,26 @@ with events_with_cum as (
             rows between unbounded preceding and current row
         )) as cum_adj_from_here
     from {{ ref('intermediate__mufg__corporate_actions') }}
+),
+
+shares_events_with_cum as (
+    select
+        code,
+        effective_date,
+        adj_factor,
+        exp(sum(ln(adj_factor)) over (
+            partition by code
+            order by effective_date desc
+            rows between unbounded preceding and current row
+        )) as shares_cum_adj_from_here
+    from {{ ref('intermediate__mufg__corporate_actions') }}
+    where effective_date is not null
 )
 
 select
     p.*,
     coalesce(e.cum_adj_from_here, 1.0) as cum_adjustment_factor,
+    coalesce(se.shares_cum_adj_from_here, 1.0) as shares_cum_adjustment_factor,
     p.am_open * coalesce(e.cum_adj_from_here, 1.0) as am_open_adj,
     p.am_high * coalesce(e.cum_adj_from_here, 1.0) as am_high_adj,
     p.am_low * coalesce(e.cum_adj_from_here, 1.0) as am_low_adj,
@@ -53,3 +80,6 @@ from {{ ref('intermediate__jpx__daily_prices') }} p
 asof left join events_with_cum e
     on p.code = e.code
     and p.file_date < e.ex_rights_date
+asof left join shares_events_with_cum se
+    on p.code = se.code
+    and p.file_date < se.effective_date
