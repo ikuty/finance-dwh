@@ -108,6 +108,70 @@ models:
           都道府県を省略した市区町村名の固定対応表による）。提出書類自体の誤記や
           住所以外の値が入っているケース(全体の0.1%未満)はNULL(推測で補わない)。
 
+  - name: cleansed__jquants__fin_summary
+    description: >
+      J-Quants API (GET /v2/fins/summary) の生レスポンスの型付け版（毎回フル
+      rebuild、Parquet）。当DWHが独自ロジックで算出した財務指標を第三者データで
+      検証する目的専用のモデル(tags=['jquants_validation']、日次のdbt buildからは
+      常に除外される）。他のcleansedモデルと異なりlanding層を経由せず、レイクの
+      生JSONファイルをDuckDBのread_json_autoで直接読む（検証専用・不定期手動実行
+      のためPrefectタスクモジュールを新設しない判断、詳細はモデルSQL冒頭コメント
+      参照）。
+      粒度は1行=1開示で、同一(code, cur_per_en)に複数行（訂正報告・連結/非連結の
+      重複等）が存在しうるが選択ロジックは持たず生のまま残す。どの行を正とするかは
+      照合スクリプト側の責務とする。
+      codeは5桁（末尾1桁は株式種別、普通株は0）で、DWH側のjpx_code（4桁）と照合
+      する際は先頭4桁を使う必要がある（2026-10-06実機確認）。
+    columns:
+      - name: code
+        description: "銘柄コード（5桁、末尾1桁は株式種別）。"
+      - name: disc_date
+        description: "開示日。"
+      - name: disc_time
+        description: "開示時刻。"
+      - name: doc_type
+        description: >
+          開示書類の種別（例: FYFinancialStatements_Consolidated_REIT,
+          EarnForecastRevision）。EarnForecastRevision等は実績値（sales/eps/bps等）
+          の列が全てNULLで、forecast_eps用の行として別途扱う必要がある
+          （2026-10-06実機確認）。
+      - name: cur_per_type
+        description: "当四半期区分（FY/2Q/1Q/3Q等）。"
+      - name: cur_per_st / cur_per_en
+        description: "当会計期間の開始日・終了日。"
+      - name: cur_fy_st / cur_fy_en
+        description: "当事業年度の開始日・終了日。"
+      - name: sales
+        description: "売上高。"
+      - name: ordinary_profit
+        description: "経常利益。"
+      - name: net_profit
+        description: "当期純利益。"
+      - name: eps
+        description: "1株当たり当期純利益。"
+      - name: diluted_eps
+        description: "潜在株式調整後1株当たり当期純利益。"
+      - name: total_assets
+        description: "総資産。"
+      - name: equity
+        description: "純資産。"
+      - name: equity_to_asset_ratio
+        description: "自己資本比率。"
+      - name: bps
+        description: "1株当たり純資産。"
+      - name: cash_flow_operating / cash_flow_investing / cash_flow_financing
+        description: "営業/投資/財務活動によるキャッシュ・フロー。"
+      - name: cash_and_equivalents
+        description: "現金及び現金同等物期末残高。"
+      - name: dividend_per_share_annual
+        description: "1株当たり年間配当額（実績）。"
+      - name: shares_outstanding
+        description: "発行済株式数（期末）。"
+      - name: roe
+        description: "自己資本利益率。"
+      - name: forecast_eps
+        description: "会社予想1株当たり当期純利益。"
+
   - name: cleansed__jpx__stq_prices
     description: >
       JPX 形式C（株式相場表・詳細日次）セクション1（立会市場普通取引）の
