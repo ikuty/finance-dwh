@@ -111,7 +111,17 @@ def ensure_data_dirs() -> None:
 
 @task
 def dbt_build() -> DbtBuildResult:
-    """dbt build を実行し、結果を解析して返す（例外は投げない）。"""
+    """dbt build を実行し、結果を解析して返す（例外は投げない）。
+
+    tag:jquants_validation は常に除外する（2026-10-06決定）。第三者データ
+    （J-Quants）による数値検証専用・不定期手動実行のモデル群で、ソースが
+    検証実行時にしか存在しないため、日次ビルドに含めると毎日エラーになる。
+    検証時は `dbt build --select tag:jquants_validation` のように明示的に
+    指定して実行する。将来similarな検証専用モデルが増えた場合も同じタグで
+    対応する（allow-list方式だと通常モデル追加時に列挙漏れで静かに日次から
+    欠落するリスクがあるため、少数派である検証系モデルをタグで除外する
+    deny-list方式を採用した）。
+    """
     logger = get_run_logger()
     cmd = [
         "dbt",
@@ -122,6 +132,8 @@ def dbt_build() -> DbtBuildResult:
         DBT_PROFILES_DIR,
         "--target",
         DBT_TARGET,
+        "--exclude",
+        "tag:jquants_validation",
     ]
     logger.info("実行: " + " ".join(cmd))
     started = time.monotonic()
