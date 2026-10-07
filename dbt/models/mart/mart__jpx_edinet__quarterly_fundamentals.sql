@@ -32,6 +32,12 @@
 -- 金額列(sales)の単位は常に円（2026-10-04修正）: ir-disclosure側のcleansed層
 -- （決算短信PDFの「百万円未満切捨て」表記のまま数値化、百万円単位）をここで
 -- 1,000,000倍して円に揃える。EDINET側は元々円のため変換不要。
+--
+-- shares_period_end_cum_adj（2026-10-07追加）: disclosed_fundamentals由来の
+-- 発行済株式数調整係数をそのまま素通し（ir_disclosure由来はNULL、元々
+-- shares_outstanding自体を持たないため）。J-Quants等、第三者データとの検証で
+-- 「決算期末がちょうど株式分割の権利確定日〜効力発生日の間に入る開示」を
+-- 識別するために必要（詳細はdisclosed_fundamentals側のコメント参照）。
 
 {{ config(
     materialized='external',
@@ -52,6 +58,7 @@ with edinet_actuals as (
         sales,
         shares_outstanding,
         dividend_per_share,
+        shares_period_end_cum_adj,
         cast(null as decimal(18, 4))               as forecast_eps,
         cast(null as date)                         as forecast_period_end,
         'edinet'                                   as source
@@ -78,6 +85,7 @@ ir_disclosure_actuals as (
         sales * 1000000                            as sales,
         cast(null as decimal(38, 4))               as shares_outstanding,
         cast(null as decimal(38, 4))               as dividend_per_share,
+        cast(null as double)                       as shares_period_end_cum_adj,
         forecast_eps,
         forecast_period_end,
         'ir_disclosure'                            as source
