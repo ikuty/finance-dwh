@@ -224,6 +224,14 @@ models:
           （2026-10-04修正、モデルSQL冒頭コメント参照）。
       - name: bps / shares_outstanding / dividend_per_share
         description: "EDINET由来の行のみ値が入る（ir_disclosure由来はNULL、決算短信から構造化していないため）。"
+      - name: shares_period_end_cum_adj
+        description: >
+          発行済株式数の調整専用の累積係数（disclosed_fundamentals由来、EDINET
+          由来の行のみ値が入る）。決算期末が株式分割・併合の権利確定日〜効力
+          発生日の間に位置する開示では、shares_outstandingは分割前の値を保持
+          したままになる。shares_outstanding / shares_period_end_cum_adjで
+          「効力発生日以降」基準の株数に変換できる（詳細はdisclosed_fundamentals
+          のモデルSQL冒頭コメント参照）。
       - name: forecast_eps
         description: >
           この行(ir_disclosure由来のみ)の決算短信に記載された会社予想EPS

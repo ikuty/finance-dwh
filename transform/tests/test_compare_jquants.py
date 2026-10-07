@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from validate.compare_jquants import exact_matches, sales_matches
+from validate.compare_jquants import exact_matches, sales_matches, shares_matches
 
 
 def test_sales_matches_allows_million_yen_truncation() -> None:
@@ -23,3 +23,25 @@ def test_exact_matches_requires_identical_value() -> None:
 
 def test_exact_matches_none_when_either_side_missing() -> None:
     assert exact_matches(None, None) is None
+
+
+def test_shares_matches_exact_value() -> None:
+    assert shares_matches(Decimal("1000.0"), Decimal("1000.0"), None) is True
+
+
+def test_shares_matches_allows_split_adjustment() -> None:
+    # ニデックの実機ケース(2024-09-30、1:2分割): DWH=分割前、J-Quants=分割後
+    assert shares_matches(Decimal("596284468.0000"), 1192568936, 0.5) is True
+
+
+def test_shares_matches_rejects_when_adjustment_does_not_explain_diff() -> None:
+    assert shares_matches(Decimal("1000.0"), Decimal("2000.0"), 1.0) is False
+
+
+def test_shares_matches_rejects_when_adjustment_missing() -> None:
+    assert shares_matches(Decimal("1000.0"), Decimal("2000.0"), None) is False
+
+
+def test_shares_matches_none_when_either_side_missing() -> None:
+    assert shares_matches(None, Decimal("1.0"), 0.5) is None
+    assert shares_matches(Decimal("1.0"), None, 0.5) is None

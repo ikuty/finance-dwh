@@ -29,8 +29,15 @@ fin_summary(検証時のみ手動実行で作成)とmart__jpx_edinet__quarterly_
     「百万円単位・切り捨て」表記のため、DWHの正確な円単位の値とは末尾6桁分が
     異なりうる(2026-10-06実機確認、全18件の不一致がこのパターンで説明できた)。
     「DWH値を100万円単位に切り捨てた値 = J-Quants値」であれば一致とみなす。
-  - eps/bps/shares_outstanding/dividend_per_shareは厳密な完全一致で判定する
+  - eps/bps/dividend_per_shareは厳密な完全一致で判定する
     (実機データでこれらに丸め誤差は見られなかった)。
+  - shares_outstandingは、決算期末が株式分割・併合の権利確定日〜効力発生日の
+    間に位置する開示で、DWHが分割前の株数を保持する一方、J-Quantsは分割後の
+    株数を遡及表示する構造的な差異がある(2026-10-07実機確認、全量データで
+    399件中339件がこのパターン。詳細はmart__jpx_edinet__quarterly_fundamentals.
+    shares_period_end_cum_adjのコメント参照)。「DWH値 ÷ shares_period_end_cum_adj
+    = J-Quants値」であれば一致とみなす。残り60件(係数がNULL・1.0でも不一致・
+    複数回の分割が重なり係数適用でも合わない等)は未解明で、不一致として報告する。
 """
 
 from __future__ import annotations
@@ -44,7 +51,7 @@ import duckdb
 CLEANSED_ROOT = os.environ.get("CLEANSED_ROOT", "/data/cleansed")
 MART_ROOT = os.environ.get("MART_ROOT", "/data/mart")
 
-EXACT_FIELDS = ("eps", "bps", "shares_outstanding", "dividend_per_share")
+EXACT_FIELDS = ("eps", "bps", "dividend_per_share")
 
 _QUERY = """
 with jq_all as (
@@ -70,6 +77,7 @@ dwh as (
         eps as dwh_eps,
         bps as dwh_bps,
         shares_outstanding as dwh_shares_outstanding,
+        shares_period_end_cum_adj,
         dividend_per_share as dwh_dividend_per_share
     from read_parquet(?)
     where is_preferred_actuals
@@ -79,7 +87,7 @@ select
     dwh.dwh_sales, jq.jq_sales,
     dwh.dwh_eps, jq.jq_eps,
     dwh.dwh_bps, jq.jq_bps,
-    dwh.dwh_shares_outstanding, jq.jq_shares_outstanding,
+    dwh.dwh_shares_outstanding, jq.jq_shares_outstanding, dwh.shares_period_end_cum_adj,
     dwh.dwh_dividend_per_share, jq.jq_dividend_per_share
 from jq
 left join dwh on jq.jpx_code = dwh.jpx_code and jq.period_end = dwh.period_end
@@ -131,14 +139,33 @@ def exact_matches(dwh_v: Numeric | None, jq_v: Numeric | None) -> bool | None:
     return float(dwh_v) == float(jq_v)
 
 
+def shares_matches(dwh_v: Numeric | None, jq_v: Numeric | None, adj: float | None) -> bool | None:
+    """株式分割の権利確定日〜効力発生日の間に決算期末がある開示では、DWHは
+    分割前の株数を保持する一方、J-Quantsは分割後の株数を遡及表示する
+    (モジュールdocstring参照)。shares_period_end_cum_adjで除した値が一致すれば
+    同一の構造的差異として一致とみなす(係数がNULL・1.0、または除しても
+    一致しない場合は不一致のまま報告する)。
+    """
+    if dwh_v is None or jq_v is None:
+        return None
+    if float(dwh_v) == float(jq_v):
+        return True
+    if adj is None or adj == 0:
+        return False
+    return abs(float(dwh_v) / adj - float(jq_v)) < 1.0
+
+
 _FIELD_CHECKS = {"sales": sales_matches} | {f: exact_matches for f in EXACT_FIELDS}
+
+
+_ALL_FIELDS = (*_FIELD_CHECKS, "shares_outstanding")
 
 
 def run_comparison(con: duckdb.DuckDBPyConnection) -> ComparisonResult:
     cleansed_path = f"{CLEANSED_ROOT}/jquants_fin_summary.parquet"
     mart_path = f"{MART_ROOT}/jpx_edinet_quarterly_fundamentals.parquet"
 
-    result = ComparisonResult(field_summaries={f: FieldSummary() for f in _FIELD_CHECKS})
+    result = ComparisonResult(field_summaries={f: FieldSummary() for f in _ALL_FIELDS})
     result.reit_skipped = con.execute(_REIT_COUNT_QUERY, [cleansed_path]).fetchone()[0]  # type: ignore[index]
 
     query_result = con.execute(_QUERY, [cleansed_path, mart_path])
@@ -146,8 +173,13 @@ def run_comparison(con: duckdb.DuckDBPyConnection) -> ComparisonResult:
     rows = [dict(zip(cols, r, strict=True)) for r in query_result.fetchall()]
 
     for row in rows:
-        for field_name, check in _FIELD_CHECKS.items():
-            is_match = check(row[f"dwh_{field_name}"], row[f"jq_{field_name}"])
+        for field_name in _ALL_FIELDS:
+            dwh_v = row[f"dwh_{field_name}"]
+            jq_v = row[f"jq_{field_name}"]
+            if field_name == "shares_outstanding":
+                is_match = shares_matches(dwh_v, jq_v, row["shares_period_end_cum_adj"])
+            else:
+                is_match = _FIELD_CHECKS[field_name](dwh_v, jq_v)
             if is_match is None:
                 continue
             summary = result.field_summaries[field_name]
@@ -161,8 +193,8 @@ def run_comparison(con: duckdb.DuckDBPyConnection) -> ComparisonResult:
                         jpx_code=row["jpx_code"],
                         period_end=row["period_end"],
                         field=field_name,
-                        dwh_value=row[f"dwh_{field_name}"],
-                        jq_value=row[f"jq_{field_name}"],
+                        dwh_value=dwh_v,
+                        jq_value=jq_v,
                     )
                 )
     return result
