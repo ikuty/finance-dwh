@@ -16,6 +16,10 @@ COPY transform/report/ /app/report/
 # jpx_stq_facts.py）。ディレクトリ単位でコピーし、fdw モジュール追加時にここを
 # 都度直す必要が無いようにする（.dockerignore で __pycache__ 等は除外済み）。
 COPY transform/fdw/ /app/fdw/
+# J-Quants検証用の不定期手動実行スクリプト（daily_transform.pyのENTRYPOINTからは
+# 呼ばれない。`docker compose run --rm --entrypoint python transform
+# validate/compare_jquants.py`で個別に実行する）。
+COPY transform/validate/ /app/validate/
 
 ENV DBT_PROJECT_DIR=/app/dbt \
     DBT_PROFILES_DIR=/app/dbt \
