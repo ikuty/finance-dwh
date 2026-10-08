@@ -49,6 +49,20 @@
 -- 必ず事業年度開始から6ヶ月間を対象とするため、period_start（信頼できる、
 -- この異常の影響を受けない）から6ヶ月後の月末として算出する方が正しい。
 -- q1/q2/q3/q4/annual/quarterはこの異常が実データで確認できなかったため対象外。
+--
+-- 訂正書類(doc_type_code='130'/'150'/'170')の取り込み(2026-10-08追加、重要):
+-- 当初オリジナル書類(120/140/160)のみを対象にしていたが、訂正有価証券報告書等が
+-- 一切反映されず、訂正前の値がEDINET側の「確定値」として使われ続けるバグがあった
+-- (2026-10-08、J-Quants照合プロジェクトでイシン株式会社の実機データから発覚。
+-- 訂正有報(2025-11-14提出)がレイクには正しく保存されているのに、本モデルのdoc_
+-- type_codeフィルタで除外されていたため、ウェアハウス層には訂正前のEPS/BPS等が
+-- 残り続けていた)。target_periods側は元々submit_date_time最新の1件を選ぶ設計
+-- (mart__edinet__financial_indicators参照)だったため、このフィルタを直すだけで
+-- 「訂正があれば訂正後を優先する」という意図していた挙動が有効になる。
+--
+-- 訂正書類はEDINET側がperiodStart/periodEndを常にNULLで返す(実機確認: イシンの
+-- 訂正有報でperiodStart/periodEnd共にNULL、代わりにparentDocIDで訂正元の書類を
+-- 指す)。そのため訂正元(parent_doc_id)からperiod_start/period_endを補完する。
 
 {{ config(
     materialized='external',
@@ -56,7 +70,13 @@
     format='parquet'
 ) }}
 
-with base as (
+with raw_docs as (
+    select *
+    from {{ ref('cleansed__edinet__documents') }}
+    where doc_type_code in ('120', '130', '140', '150', '160', '170')
+),
+
+base as (
     select
         d.doc_id,
         d.edinet_code,
@@ -65,22 +85,22 @@ with base as (
         case when d.ordinance_code = '030' then 'fund' else 'company' end as filer_category,
         nullif(regexp_extract(d.doc_description, '第([0-9]+)期', 1), '')::integer as fiscal_year,
         case
-            when d.doc_type_code = '120' then 'annual'
-            when d.doc_type_code = '160' then 'half'
-            when d.doc_type_code = '140' then
+            when d.doc_type_code in ('120', '130') then 'annual'
+            when d.doc_type_code in ('160', '170') then 'half'
+            when d.doc_type_code in ('140', '150') then
                 case
                     when regexp_extract(d.doc_description, '第([0-9])四半期', 1) <> ''
                         then 'q' || regexp_extract(d.doc_description, '第([0-9])四半期', 1)
                     else 'quarter'
                 end
         end as period_type,
-        d.period_start,
-        d.period_end,
+        coalesce(d.period_start, p.period_start) as period_start,
+        coalesce(d.period_end, p.period_end) as period_end,
         d.submit_date_time,
         d.doc_type_code,
         d.form_code
-    from {{ ref('cleansed__edinet__documents') }} d
-    where d.doc_type_code in ('120', '140', '160')
+    from raw_docs d
+    left join raw_docs p on p.doc_id = d.parent_doc_id
 ),
 
 regime_flags as (
@@ -120,3 +140,9 @@ select
 from base b
 left join regime_flags rf
     on rf.edinet_code = b.edinet_code and rf.fiscal_year = b.fiscal_year
+-- 訂正元(parent_doc_id)がレイクに存在せずperiod_start/period_endを補完できない行は
+-- 除外する(2026-10-08確認、1,431件該当。全件が「訂正元書類がedinet-dlのバックフィル
+-- 開始(2016-08-13)より前に提出されており取得範囲外」のケースで、period_type別の
+-- 連鎖切れ等の別パターンは実データで確認されなかった。period_endが無いと後続の
+-- 期間ベース結合で使えないため、NULLのまま残すより除外する方が安全)。
+where b.period_start is not null and b.period_end is not null
