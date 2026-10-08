@@ -235,6 +235,13 @@ models:
           したままになる。shares_outstanding / shares_period_end_cum_adjで
           「効力発生日以降」基準の株数に変換できる（詳細はdisclosed_fundamentals
           のモデルSQL冒頭コメント参照）。
+      - name: period_end_cum_adj
+        description: >
+          EPS/BPS/1株配当の調整専用の累積係数（disclosed_fundamentals由来、EDINET
+          由来の行のみ値が入る。権利落ち日ex_rights_date基準、shares_period_end_
+          cum_adjとは基準日が異なる）。株式分割・併合をまたいだ開示間の比較や、
+          J-Quants等の第三者データとの検証に使う（詳細はdisclosed_fundamentals
+          のモデルSQL冒頭コメント参照）。
       - name: forecast_eps
         description: >
           この行(ir_disclosure由来のみ)の決算短信に記載された会社予想EPS
