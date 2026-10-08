@@ -16,6 +16,12 @@ def test_sales_matches_none_when_either_side_missing() -> None:
     assert sales_matches(Decimal("1.0"), None) is None
 
 
+def test_sales_matches_exact_value_not_a_multiple_of_million() -> None:
+    # 2026-10-08修正: 完全一致する値でも、それ自体が100万円単位の倍数でない場合に
+    # 誤って不一致と判定していたバグの回帰テスト。
+    assert sales_matches(Decimal("22329565000.0000"), Decimal("22329565000.00")) is True
+
+
 def test_exact_matches_requires_identical_value() -> None:
     assert exact_matches(Decimal("121.6000"), Decimal("121.6000")) is True
     assert exact_matches(Decimal("121.6000"), Decimal("121.6001")) is False
