@@ -20,9 +20,20 @@
 -- それらの会計基準を採用する企業ではNULLになる（意図した挙動、各intermediate
 -- モデル側でNULL固定）。
 --
--- 訂正報告書対応: report_periodsは書類(doc_id)粒度で訂正報告書も別行として保持する
--- ため、同一(edinet_code, fiscal_year, period_type)にdoc_idが複数あり得る。
--- submit_date_time最新の1件に絞ってから指標を結合する。
+-- 訂正報告書対応(2026-10-08、列単位のlatest-non-null方式に変更、重要):
+--   report_periodsは書類(doc_id)粒度で訂正報告書も別行として保持するため、同一
+--   (edinet_code, fiscal_year, period_type)にdoc_idが複数あり得る。当初
+--   submit_date_time最新の1件に絞る(行単位)方式だったが、訂正書類のXBRLは訂正
+--   した項目だけを再タグ付けする実務があり(実機確認: イシン株式会社の訂正有報は
+--   EPS/BPSタグを持たず、半期比較情報のテキストブロック内にのみ訂正後の値が
+--   記載されていた)、行単位で最新を選ぶとその書類に無い項目がNULLになり、訂正前
+--   の値まで失ってしまっていた。そのため、書類ごとに計算した指標値を一度combined
+--   (per_doc)として保持し、最終selectで各指標列ごとに
+--   「list(列 order by submit_date_time desc) filter (where 列 is not null)」の
+--   先頭要素を取る(=新しい書類から見て最初に見つかった非NULL値)方式に変更した。
+--   doc_id/submit_date_time等のメタデータ列は「全体として最新の書類」を代表値として
+--   残すが、個々の指標はその書類に無ければ古い書類から遡る点に注意(1行の値が複数の
+--   doc_idに由来しうる、来歴の厳密な単一性は持たない)。
 --
 -- submit_date_time列(2026-09-25追加): 株価と組み合わせる際、決算期末日ではなく
 -- この開示日を基準にする必要がある(決算期末日を基準にすると、実際にはまだ
@@ -44,21 +55,10 @@
 
 with periods as (
     select
-        *,
-        row_number() over (
-            partition by edinet_code, fiscal_year, period_type
-            order by submit_date_time desc
-        ) as _rn
-    from {{ ref('cleansed__edinet__report_periods') }}
-    where filer_category = 'company' and fiscal_year is not null
-),
-
-target_periods as (
-    select
         doc_id, edinet_code, sec_code, filer_name, fiscal_year, period_type,
         period_start, period_end, submit_date_time, regime
-    from periods
-    where _rn = 1
+    from {{ ref('cleansed__edinet__report_periods') }}
+    where filer_category = 'company' and fiscal_year is not null
 ),
 
 dei as (
@@ -98,14 +98,15 @@ combined as (
         jg.comprehensive_income as jg_comprehensive_income, ifrs.comprehensive_income as ifrs_comprehensive_income, us.comprehensive_income as us_comprehensive_income,
         jg.cash_and_equivalents as jg_cash_and_equivalents, ifrs.cash_and_equivalents as ifrs_cash_and_equivalents, us.cash_and_equivalents as us_cash_and_equivalents,
         jg.dividend_per_share as jg_dividend_per_share, ifrs.dividend_per_share as ifrs_dividend_per_share, us.dividend_per_share as us_dividend_per_share
-    from target_periods tp
+    from periods tp
     left join dei d on d.doc_id = tp.doc_id
     left join hq on hq.doc_id = tp.doc_id
     left join {{ ref('intermediate__edinet__jgaap_financial_facts') }} jg on jg.doc_id = tp.doc_id
     left join {{ ref('intermediate__edinet__ifrs_financial_facts') }} ifrs on ifrs.doc_id = tp.doc_id
     left join {{ ref('intermediate__edinet__usgaap_financial_facts') }} us on us.doc_id = tp.doc_id
-)
+),
 
+per_doc as (
 select
     doc_id,
     edinet_code,
@@ -247,3 +248,42 @@ select
         ifrs_dividend_per_share, jg_dividend_per_share, us_dividend_per_share
     ) as dividend_per_share
 from combined
+)
+
+select
+    edinet_code,
+    fiscal_year,
+    period_type,
+    (list(doc_id order by submit_date_time desc))[1] as doc_id,
+    (list(sec_code order by submit_date_time desc) filter (where sec_code is not null))[1] as sec_code,
+    (list(filer_name order by submit_date_time desc) filter (where filer_name is not null))[1] as filer_name,
+    (list(period_start order by submit_date_time desc) filter (where period_start is not null))[1] as period_start,
+    (list(period_end order by submit_date_time desc) filter (where period_end is not null))[1] as period_end,
+    (list(submit_date_time order by submit_date_time desc))[1] as submit_date_time,
+    (list(regime order by submit_date_time desc) filter (where regime is not null))[1] as regime,
+    (list(accounting_standard order by submit_date_time desc) filter (where accounting_standard is not null))[1] as accounting_standard,
+    (list(has_consolidated order by submit_date_time desc) filter (where has_consolidated is not null))[1] as has_consolidated,
+    (list(headquarters_address order by submit_date_time desc) filter (where headquarters_address is not null))[1] as headquarters_address,
+    (list(prefecture order by submit_date_time desc) filter (where prefecture is not null))[1] as prefecture,
+    (list(total_assets order by submit_date_time desc) filter (where total_assets is not null))[1] as total_assets,
+    (list(net_assets order by submit_date_time desc) filter (where net_assets is not null))[1] as net_assets,
+    (list(equity_ratio order by submit_date_time desc) filter (where equity_ratio is not null))[1] as equity_ratio,
+    (list(ordinary_income order by submit_date_time desc) filter (where ordinary_income is not null))[1] as ordinary_income,
+    (list(net_income order by submit_date_time desc) filter (where net_income is not null))[1] as net_income,
+    (list(sales order by submit_date_time desc) filter (where sales is not null))[1] as sales,
+    (list(eps order by submit_date_time desc) filter (where eps is not null))[1] as eps,
+    (list(bps order by submit_date_time desc) filter (where bps is not null))[1] as bps,
+    (list(roe order by submit_date_time desc) filter (where roe is not null))[1] as roe,
+    (list(per order by submit_date_time desc) filter (where per is not null))[1] as per,
+    (list(operating_cf order by submit_date_time desc) filter (where operating_cf is not null))[1] as operating_cf,
+    (list(investing_cf order by submit_date_time desc) filter (where investing_cf is not null))[1] as investing_cf,
+    (list(financing_cf order by submit_date_time desc) filter (where financing_cf is not null))[1] as financing_cf,
+    (list(capital order by submit_date_time desc) filter (where capital is not null))[1] as capital,
+    (list(payout_ratio order by submit_date_time desc) filter (where payout_ratio is not null))[1] as payout_ratio,
+    (list(shares_outstanding order by submit_date_time desc) filter (where shares_outstanding is not null))[1] as shares_outstanding,
+    (list(diluted_eps order by submit_date_time desc) filter (where diluted_eps is not null))[1] as diluted_eps,
+    (list(comprehensive_income order by submit_date_time desc) filter (where comprehensive_income is not null))[1] as comprehensive_income,
+    (list(cash_and_equivalents order by submit_date_time desc) filter (where cash_and_equivalents is not null))[1] as cash_and_equivalents,
+    (list(dividend_per_share order by submit_date_time desc) filter (where dividend_per_share is not null))[1] as dividend_per_share
+from per_doc
+group by edinet_code, fiscal_year, period_type

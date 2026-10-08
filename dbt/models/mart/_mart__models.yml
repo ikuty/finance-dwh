@@ -10,7 +10,10 @@ models:
       優先しつつcoalesce()で1列に統合する（2026-09-21、intermediate層導入）。
     columns:
       - name: doc_id
-        description: "根拠となった書類のID（同一期に複数提出があれば submit_date_time 最新の1件）。"
+        description: >
+          参照用の代表書類ID（同一期に複数提出があれば submit_date_time 最新の1件）。
+          2026-10-08以降、各指標列は列ごとに最新の非NULL値を採用するため、必ずしも
+          この書類1件だけに由来するとは限らない（詳細はモデルSQL冒頭コメント参照）。
         data_tests: [not_null]
       - name: edinet_code
         description: "EDINETコード。"
