@@ -38,6 +38,12 @@
 -- shares_outstanding自体を持たないため）。J-Quants等、第三者データとの検証で
 -- 「決算期末がちょうど株式分割の権利確定日〜効力発生日の間に入る開示」を
 -- 識別するために必要（詳細はdisclosed_fundamentals側のコメント参照）。
+--
+-- period_end_cum_adj（2026-10-09追加）: disclosed_fundamentals由来の
+-- EPS/BPS/1株配当調整用の累積調整係数(ex_rights_date基準)をそのまま素通し
+-- （ir_disclosure由来はNULL）。shares_period_end_cum_adjと同じ構造的差異が
+-- EPS/BPS/1株配当でも生じるため、J-Quants等との検証にはこちらを使う
+-- （詳細はdisclosed_fundamentals側のコメント参照）。
 
 {{ config(
     materialized='external',
@@ -59,6 +65,7 @@ with edinet_actuals as (
         shares_outstanding,
         dividend_per_share,
         shares_period_end_cum_adj,
+        period_end_cum_adj,
         cast(null as decimal(18, 4))               as forecast_eps,
         cast(null as date)                         as forecast_period_end,
         'edinet'                                   as source
@@ -86,6 +93,7 @@ ir_disclosure_actuals as (
         cast(null as decimal(38, 4))               as shares_outstanding,
         cast(null as decimal(38, 4))               as dividend_per_share,
         cast(null as double)                       as shares_period_end_cum_adj,
+        cast(null as double)                       as period_end_cum_adj,
         forecast_eps,
         forecast_period_end,
         'ir_disclosure'                            as source
