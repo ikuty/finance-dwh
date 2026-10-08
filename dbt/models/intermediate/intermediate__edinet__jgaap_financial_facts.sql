@@ -13,6 +13,12 @@
 --   別物）。has_consolidated is null（DEI取得不可）の場合は許容側(false相当)とする。
 --
 -- 「当期」を表すcontext_idの接頭辞は書類種別で異なる。詳細はmart側コメント参照。
+-- 訂正書類(doc_type_code='130'/'150'/'170')は、対応するオリジナル('120'/'140'/'160')と
+-- 同じcontext_id規則を使う(2026-10-08実機確認、サンテック(1960)の訂正有報・150/170の
+-- サンプル書類で確認)。report_periodsが訂正書類を取り込むようになった(2026-10-08)後も
+-- このcase式が'120'/'140'/'160'のみ対応でelse falseだったため、訂正書類からは一切
+-- ファクトが抽出されない不具合があった(mart__edinet__financial_indicatorsの列単位
+-- 救済ロジックが「訂正書類に項目が無い」と誤認し続けていた)。
 --
 -- 通貨単位の判定(2026-09-22判明、重要):
 --   IFRS採用企業の一部（三井海洋開発(6269)等）は、経営指標等のIFRSタグをUSD建てで
@@ -91,9 +97,9 @@ current_period_facts as (
         context_id like '%_NonConsolidatedMember' as is_non_consolidated
     from relevant_facts
     where case
-            when doc_type_code = '120' then regexp_matches(context_id, '^CurrentYear(Instant|Duration)(_NonConsolidatedMember)?$')
-            when doc_type_code = '140' then regexp_matches(context_id, '^Current(Quarter|YTD)(Instant|Duration)(_NonConsolidatedMember)?$')
-            when doc_type_code = '160' then regexp_matches(context_id, '^(Interim|Current(Quarter|YTD))(Instant|Duration)(_NonConsolidatedMember)?$')
+            when doc_type_code in ('120', '130') then regexp_matches(context_id, '^CurrentYear(Instant|Duration)(_NonConsolidatedMember)?$')
+            when doc_type_code in ('140', '150') then regexp_matches(context_id, '^Current(Quarter|YTD)(Instant|Duration)(_NonConsolidatedMember)?$')
+            when doc_type_code in ('160', '170') then regexp_matches(context_id, '^(Interim|Current(Quarter|YTD))(Instant|Duration)(_NonConsolidatedMember)?$')
             else false
           end
 ),
