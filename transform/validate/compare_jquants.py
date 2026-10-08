@@ -36,8 +36,6 @@ fin_summary(検証時のみ手動実行で作成)とmart__jpx_edinet__quarterly_
     「百万円単位・切り捨て」表記のため、DWHの正確な円単位の値とは末尾6桁分が
     異なりうる(2026-10-06実機確認、全18件の不一致がこのパターンで説明できた)。
     「DWH値を100万円単位に切り捨てた値 = J-Quants値」であれば一致とみなす。
-  - eps/bps/dividend_per_shareは厳密な完全一致で判定する
-    (実機データでこれらに丸め誤差は見られなかった)。
   - shares_outstandingは、決算期末が株式分割・併合の権利確定日〜効力発生日の
     間に位置する開示で、DWHが分割前の株数を保持する一方、J-Quantsは分割後の
     株数を遡及表示する構造的な差異がある(2026-10-07実機確認、全量データで
@@ -45,6 +43,12 @@ fin_summary(検証時のみ手動実行で作成)とmart__jpx_edinet__quarterly_
     shares_period_end_cum_adjのコメント参照)。「DWH値 ÷ shares_period_end_cum_adj
     = J-Quants値」であれば一致とみなす。残り60件(係数がNULL・1.0でも不一致・
     複数回の分割が重なり係数適用でも合わない等)は未解明で、不一致として報告する。
+  - eps/bps/dividend_per_shareも、決算期末が株式分割・併合の権利確定日(ex_rights_
+    date)をまたぐ開示では同じ構造的差異が生じる(2026-10-09実機確認、複数社で
+    DWH値をperiod_end_cum_adjで除するとJ-Quants値と一致する、または僅かな丸め
+    誤差内で一致することを確認)。「DWH値 ÷ period_end_cum_adj ≈ J-Quants値」
+    (許容誤差は係数の逆数に比例、開示値自体の円単位丸めが除算で拡大されるため)
+    であれば一致とみなす。
 """
 
 from __future__ import annotations
@@ -58,7 +62,7 @@ import duckdb
 CLEANSED_ROOT = os.environ.get("CLEANSED_ROOT", "/data/cleansed")
 MART_ROOT = os.environ.get("MART_ROOT", "/data/mart")
 
-EXACT_FIELDS = ("eps", "bps", "dividend_per_share")
+_PERIOD_ADJUSTABLE_FIELDS = ("eps", "bps", "dividend_per_share")
 
 _QUERY = """
 with jq_all as (
@@ -95,6 +99,7 @@ dwh as (
         bps as dwh_bps,
         shares_outstanding as dwh_shares_outstanding,
         shares_period_end_cum_adj,
+        period_end_cum_adj,
         dividend_per_share as dwh_dividend_per_share
     from read_parquet(?)
     where is_preferred_actuals
@@ -105,7 +110,7 @@ select
     dwh.dwh_eps, jq.jq_eps,
     dwh.dwh_bps, jq.jq_bps,
     dwh.dwh_shares_outstanding, jq.jq_shares_outstanding, dwh.shares_period_end_cum_adj,
-    dwh.dwh_dividend_per_share, jq.jq_dividend_per_share
+    dwh.dwh_dividend_per_share, jq.jq_dividend_per_share, dwh.period_end_cum_adj
 from jq
 left join dwh on jq.jpx_code = dwh.jpx_code and jq.period_end = dwh.period_end
 order by jq.jpx_code, jq.period_end
@@ -156,10 +161,20 @@ def sales_matches(dwh_v: Numeric | None, jq_v: Numeric | None) -> bool | None:
     return float(dwh_v) // 1_000_000 * 1_000_000 == float(jq_v)
 
 
-def exact_matches(dwh_v: Numeric | None, jq_v: Numeric | None) -> bool | None:
+def period_adjusted_matches(dwh_v: Numeric | None, jq_v: Numeric | None, adj: float | None) -> bool | None:
+    """eps/bps/dividend_per_shareも、決算期末が株式分割・併合の権利確定日
+    (ex_rights_date)をまたぐ開示では同じ構造的差異が生じる(モジュールdocstring
+    参照)。period_end_cum_adjで除した値が一致すれば一致とみなす。開示値自体が
+    円単位で丸められているため、許容誤差は係数の逆数に比例して拡大する
+    (0.01 / adj、実機データで確認した誤差幅に基づく。例: adj=0.1なら許容誤差0.1円)。
+    """
     if dwh_v is None or jq_v is None:
         return None
-    return float(dwh_v) == float(jq_v)
+    if float(dwh_v) == float(jq_v):
+        return True
+    if adj is None or adj == 0:
+        return False
+    return abs(float(dwh_v) / adj - float(jq_v)) < (0.01 / abs(adj))
 
 
 def shares_matches(dwh_v: Numeric | None, jq_v: Numeric | None, adj: float | None) -> bool | None:
@@ -178,10 +193,7 @@ def shares_matches(dwh_v: Numeric | None, jq_v: Numeric | None, adj: float | Non
     return abs(float(dwh_v) / adj - float(jq_v)) < 1.0
 
 
-_FIELD_CHECKS = {"sales": sales_matches} | {f: exact_matches for f in EXACT_FIELDS}
-
-
-_ALL_FIELDS = (*_FIELD_CHECKS, "shares_outstanding")
+_ALL_FIELDS = ("sales", *_PERIOD_ADJUSTABLE_FIELDS, "shares_outstanding")
 
 
 def run_comparison(con: duckdb.DuckDBPyConnection) -> ComparisonResult:
@@ -199,10 +211,12 @@ def run_comparison(con: duckdb.DuckDBPyConnection) -> ComparisonResult:
         for field_name in _ALL_FIELDS:
             dwh_v = row[f"dwh_{field_name}"]
             jq_v = row[f"jq_{field_name}"]
-            if field_name == "shares_outstanding":
+            if field_name == "sales":
+                is_match = sales_matches(dwh_v, jq_v)
+            elif field_name == "shares_outstanding":
                 is_match = shares_matches(dwh_v, jq_v, row["shares_period_end_cum_adj"])
             else:
-                is_match = _FIELD_CHECKS[field_name](dwh_v, jq_v)
+                is_match = period_adjusted_matches(dwh_v, jq_v, row["period_end_cum_adj"])
             if is_match is None:
                 continue
             summary = result.field_summaries[field_name]
