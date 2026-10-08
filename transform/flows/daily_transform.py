@@ -58,6 +58,7 @@ from flows.load_jpx_monthly_ohlc import load_jpx_monthly_ohlc_facts
 from flows.load_jpx_stq import load_jpx_stq_prices_backlog, load_jpx_stq_prices_recent
 from flows.load_mufg_corporate_actions import load_mufg_corporate_actions
 from flows.notify import send_slack_notification, upload_report_to_s3
+from flows.test_violations import find_notify_worthy_violations, format_violation_message
 from report.run_report import DbtOutcome, generate_report
 
 DBT_PROJECT_DIR = os.environ.get("DBT_PROJECT_DIR", "/app/dbt")
@@ -209,6 +210,31 @@ def publish_and_notify(html: str, summary: str) -> str:
     return summary
 
 
+@task
+def notify_test_violations() -> None:
+    """meta.notify_slack=trueのdbtテストでwarnが出ていれば、該当行を添えて
+    通常のビルドサマリとは別にSlack通知する（human-in-the-loop、詳細は
+    flows/test_violations.pyのモジュールdocstring参照）。DB接続不可等でも
+    落とさない。"""
+    logger = get_run_logger()
+    std_logger = logging.getLogger("finance-dwh.notify")
+
+    duckdb_path = os.environ.get("DUCKDB_PATH", "/data/finance_dwh.duckdb")
+    violations = find_notify_worthy_violations(DBT_PROJECT_DIR, duckdb_path, std_logger)
+    if not violations:
+        logger.info("Slack通知対象のテスト違反はありませんでした")
+        return
+
+    webhook = os.environ.get("SLACK_WEBHOOK_URL")
+    if not webhook:
+        logger.info("SLACK_WEBHOOK_URL 未設定のためテスト違反のSlack通知はスキップ")
+        return
+
+    for violation in violations:
+        send_slack_notification(webhook, format_violation_message(violation), std_logger)
+    logger.info(f"テスト違反のSlack通知を送信しました({len(violations)}件のテスト)")
+
+
 @flow(name="finance-dwh-daily-transform")
 def daily_transform() -> str:
     logger = get_run_logger()
@@ -240,6 +266,7 @@ def daily_transform() -> str:
 
     html, summary = build_report(result)
     summary = publish_and_notify(html, summary)
+    notify_test_violations()
 
     # バックログ・過去分バックフィル系は日次の本質的な処理より後に回す(理由は
     # モジュールdocstring参照)。ここで電源枠が尽きて中断されても、landingは

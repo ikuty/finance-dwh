@@ -13,12 +13,15 @@
 -- 既存のassert_..._eps_recomputed/bps_recomputedは再計算との軽微な乖離も
 -- 含め大量(1,000件超)にWARNを出すため、人間によるSlack確認には適さない。
 -- 本テストは「桁が明らかにおかしい」という狭い基準に絞った独立のチェックで、
--- 将来的にSlack通知等のhuman-in-the-loopフローに接続することを想定している
--- (2026-10-09時点ではdbtのWARN検知のみ、通知の仕組みは別途検討中)。
+-- Slack通知対象(human-in-the-loop)としてmeta.notify_slack=trueを付与している。
+-- 新しい通知対象テストを追加する場合も、このmetaを付けるだけでよい
+-- （transform/flows/test_violations.pyがmanifest.jsonのmetaを見て自動検出する。
+-- 2026-10-09決定、課題1のtag方式deny-listと同じ考え方: 通知すべきかという
+-- 判断をテスト本体と切り離した別リストに置くと、将来追加時の記入漏れに気づけない）。
 --
 -- severity=warn(buildは失敗させない、目視確認用)。行が返れば対象。
 
-{{ config(severity='warn') }}
+{{ config(severity='warn', meta={'notify_slack': true}) }}
 
 select doc_id, edinet_code, fiscal_year, period_type, eps, bps
 from {{ ref('mart__edinet__financial_indicators') }}
