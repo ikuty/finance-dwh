@@ -23,6 +23,13 @@ fin_summary(検証時のみ手動実行で作成)とmart__jpx_edinet__quarterly_
     (jpsps_cor:)に対応するDWH側の抽出ロジックが別途必要。
   - J-QuantsのCodeは5桁(末尾1桁は株式種別)。DWHのjpx_codeは4桁のため、
     Codeの先頭4桁で結合する。
+  - 同一(jpx_code, period_end)にJ-Quants側が複数行を持つことがある(2026-10-08
+    実機確認、全31,289組中1,146組。779組は同じ値の重複掲載、367組は決算短信の
+    訂正等で値が実際に変化していた)。disc_date・disc_timeが最新の1行を残す
+    (DWH側のis_preferred_actuals=「最新開示優先」と同じ考え方)。この規則でも
+    一致しないケースは、J-Quants側の決算短信訂正とEDINET確定値が実際にズレて
+    いる本物の差異として報告する(どちらを残しても一方では必ず新たな不一致が
+    生じるケースがあることを実機確認済み、ルールの欠陥ではなく本物の差異)。
 
 数値の一致判定:
   - sales(売上高)は、J-Quants側が決算短信・有報のサマリー表に記載された
@@ -59,6 +66,8 @@ with jq_all as (
         left(code, 4) as jpx_code,
         doc_type,
         cur_per_en as period_end,
+        disc_date,
+        disc_time,
         sales as jq_sales,
         eps as jq_eps,
         bps as jq_bps,
@@ -67,8 +76,16 @@ with jq_all as (
     from read_parquet(?)
     where doc_type like '%FinancialStatements%'
 ),
+jq_deduped as (
+    select *, row_number() over (
+        partition by jpx_code, period_end
+        order by disc_date desc, disc_time desc
+    ) as _rn
+    from jq_all
+    where doc_type not like '%REIT%'
+),
 jq as (
-    select * from jq_all where doc_type not like '%REIT%'
+    select * from jq_deduped where _rn = 1
 ),
 dwh as (
     select
