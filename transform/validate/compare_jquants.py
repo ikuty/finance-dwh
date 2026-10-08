@@ -144,9 +144,15 @@ Numeric = int | float | Decimal
 
 
 def sales_matches(dwh_v: Numeric | None, jq_v: Numeric | None) -> bool | None:
-    """売上高は100万円単位切り捨ての差異を許容する(モジュールdocstring参照)。"""
+    """売上高は100万円単位切り捨ての差異を許容する(モジュールdocstring参照)。
+    まず完全一致を試す(2026-10-08修正: 完全一致する値でも、その値自体が
+    100万円単位の倍数でなければ切り捨て後の値と一致せず誤って不一致判定していた
+    バグがあった。実機確認で209件中9件がこのバグによる誤判定)。
+    """
     if dwh_v is None or jq_v is None:
         return None
+    if float(dwh_v) == float(jq_v):
+        return True
     return float(dwh_v) // 1_000_000 * 1_000_000 == float(jq_v)
 
 
