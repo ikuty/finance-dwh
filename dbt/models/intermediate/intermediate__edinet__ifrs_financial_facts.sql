@@ -17,6 +17,15 @@
 -- dividend_per_shareはhas_consolidatedによる個別値フォールバック制限を適用しない
 -- (配当額は連結決算作成企業でも経営指標等表で個別コンテキストのみタグ付けされるのが
 -- 通例のため)。詳細はintermediate__edinet__jgaap_financial_factsのコメント参照。
+--
+-- 2026-10-10追加(四半期報告書における「単独四半期」と「期初来累計」の重複):
+-- J-GAAPモデルと同じ構造的バグがIFRSタグにも広範に存在する(全量検証で確認): 基本的
+-- EPS(1,744文書で相違)・希薄化後EPS(40文書)・net_income(当期利益：親会社の所有者に
+-- 帰属、1,704文書)・comprehensive_income(当期包括利益：親会社の所有者に帰属、16文書)・
+-- sales(売上収益(IFRS)1,669文書+売上収益(無印)7文書)で`CurrentQuarterDuration`と
+-- `CurrentYTDDuration`が同時に存在し値が異なる。他の指標（総資産額・キャッシュフロー等）
+-- は常に片方のみのため変更不要。詳細はintermediate__edinet__jgaap_financial_facts
+-- のコメント参照。
 
 {{ config(
     materialized='external',
@@ -58,7 +67,8 @@ relevant_facts as (
 current_period_facts as (
     select
         doc_id, item_name, value_num, unit_id,
-        context_id like '%_NonConsolidatedMember' as is_non_consolidated
+        context_id like '%_NonConsolidatedMember' as is_non_consolidated,
+        context_id like 'CurrentQuarter%' as is_quarter_only
     from relevant_facts
     where case
             when doc_type_code in ('120', '130') then regexp_matches(context_id, '^CurrentYear(Instant|Duration)(_NonConsolidatedMember)?$')
@@ -96,25 +106,49 @@ select
     ) as equity_ratio,
     cast(null as decimal(38, 4)) as ordinary_income,
     coalesce(
-        max(case when item_name = '当期利益又は当期損失（△）：親会社の所有者に帰属（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
+        coalesce(
+            max(case when item_name = '当期利益又は当期損失（△）：親会社の所有者に帰属（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' and not is_quarter_only then value_num end),
+            max(case when item_name = '当期利益又は当期損失（△）：親会社の所有者に帰属（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' and is_quarter_only then value_num end)
+        ),
         case when not bool_or(has_consolidated) then
-            max(case when item_name = '当期利益又は当期損失（△）：親会社の所有者に帰属（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end)
+            coalesce(
+                max(case when item_name = '当期利益又は当期損失（△）：親会社の所有者に帰属（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' and not is_quarter_only then value_num end),
+                max(case when item_name = '当期利益又は当期損失（△）：親会社の所有者に帰属（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' and is_quarter_only then value_num end)
+            )
         end
     ) as net_income,
     coalesce(
-        max(case when item_name = '売上収益（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
-        max(case when item_name = '売上収益、経営指標等' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
+        coalesce(
+            max(case when item_name = '売上収益（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' and not is_quarter_only then value_num end),
+            max(case when item_name = '売上収益（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' and is_quarter_only then value_num end)
+        ),
+        coalesce(
+            max(case when item_name = '売上収益、経営指標等' and not is_non_consolidated and unit_id = 'JPY' and not is_quarter_only then value_num end),
+            max(case when item_name = '売上収益、経営指標等' and not is_non_consolidated and unit_id = 'JPY' and is_quarter_only then value_num end)
+        ),
         case when not bool_or(has_consolidated) then
             coalesce(
-                max(case when item_name = '売上収益（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end),
-                max(case when item_name = '売上収益、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end)
+                coalesce(
+                    max(case when item_name = '売上収益（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' and not is_quarter_only then value_num end),
+                    max(case when item_name = '売上収益（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' and is_quarter_only then value_num end)
+                ),
+                coalesce(
+                    max(case when item_name = '売上収益、経営指標等' and is_non_consolidated and unit_id = 'JPY' and not is_quarter_only then value_num end),
+                    max(case when item_name = '売上収益、経営指標等' and is_non_consolidated and unit_id = 'JPY' and is_quarter_only then value_num end)
+                )
             )
         end
     ) as sales,
     coalesce(
-        max(case when item_name = '基本的１株当たり利益又は損失（△）（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' then value_num end),
+        coalesce(
+            max(case when item_name = '基本的１株当たり利益又は損失（△）（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' and not is_quarter_only then value_num end),
+            max(case when item_name = '基本的１株当たり利益又は損失（△）（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' and is_quarter_only then value_num end)
+        ),
         case when not bool_or(has_consolidated) then
-            max(case when item_name = '基本的１株当たり利益又は損失（△）（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' then value_num end)
+            coalesce(
+                max(case when item_name = '基本的１株当たり利益又は損失（△）（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' and not is_quarter_only then value_num end),
+                max(case when item_name = '基本的１株当たり利益又は損失（△）（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' and is_quarter_only then value_num end)
+            )
         end
     ) as eps,
     coalesce(
@@ -162,17 +196,29 @@ select
         end
     ) as shares_outstanding,
     coalesce(
-        max(case when item_name = '希薄化後１株当たり利益又は損失（△）（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' then value_num end),
+        coalesce(
+            max(case when item_name = '希薄化後１株当たり利益又は損失（△）（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' and not is_quarter_only then value_num end),
+            max(case when item_name = '希薄化後１株当たり利益又は損失（△）（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' and is_quarter_only then value_num end)
+        ),
         case when not bool_or(has_consolidated) then
-            max(case when item_name = '希薄化後１株当たり利益又は損失（△）（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' then value_num end)
+            coalesce(
+                max(case when item_name = '希薄化後１株当たり利益又は損失（△）（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' and not is_quarter_only then value_num end),
+                max(case when item_name = '希薄化後１株当たり利益又は損失（△）（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' and is_quarter_only then value_num end)
+            )
         end
     ) as diluted_eps,
     coalesce(
-        max(case when item_name = '当期包括利益：親会社の所有者に帰属（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
+        coalesce(
+            max(case when item_name = '当期包括利益：親会社の所有者に帰属（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' and not is_quarter_only then value_num end),
+            max(case when item_name = '当期包括利益：親会社の所有者に帰属（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' and is_quarter_only then value_num end)
+        ),
         max(case when item_name = '当期包括利益（IFRS）、経営指標等' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
         case when not bool_or(has_consolidated) then
             coalesce(
-                max(case when item_name = '当期包括利益：親会社の所有者に帰属（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end),
+                coalesce(
+                    max(case when item_name = '当期包括利益：親会社の所有者に帰属（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' and not is_quarter_only then value_num end),
+                    max(case when item_name = '当期包括利益：親会社の所有者に帰属（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' and is_quarter_only then value_num end)
+                ),
                 max(case when item_name = '当期包括利益（IFRS）、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end)
             )
         end
