@@ -22,6 +22,12 @@ def test_sales_matches_exact_value_not_a_multiple_of_million() -> None:
     assert sales_matches(Decimal("22329565000.0000"), Decimal("22329565000.00")) is True
 
 
+def test_sales_matches_allows_million_yen_rounding() -> None:
+    # 2026-10-10追加: 切り捨てではなく四捨五入で100万円単位に丸めている開示も
+    # 実在する(実機確認、全量データで切り捨て不一致203件中91件がこのパターン)。
+    assert sales_matches(Decimal("12716937000.0000"), Decimal("12717000000.00")) is True
+
+
 def test_period_adjusted_matches_requires_identical_value_when_no_adjustment() -> None:
     assert period_adjusted_matches(Decimal("121.6000"), Decimal("121.6000"), None) is True
     assert period_adjusted_matches(Decimal("121.6000"), Decimal("121.6001"), None) is False
