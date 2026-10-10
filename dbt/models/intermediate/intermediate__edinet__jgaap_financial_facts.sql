@@ -48,6 +48,33 @@
 -- total_assets/salesのような「個別値が連結値の代替として比較不可能」という問題が
 -- 配当額には当てはまらない（1株当たり配当は連結・個別で本質的に同一の、企業単位の
 -- 意思決定であり、規模の異なる指標ではない）ため、常に個別値へフォールバックする。
+--
+-- 2026-10-10追加(sales、売上高への営業収入の加算): 一部企業（スーパー・外食等）は
+-- 経営指標等の売上高とは別に、経営指標等の接尾辞を持たない生のP/L項目「営業収入」
+-- (jppfs_cor:OperatingRevenue2、不動産賃貸収入等の付随的な本業収益)を別建てで開示し、
+-- J-Quantsのsales（決算短信サマリーの売上高）はこの合計値である。一方、同じXBRL要素
+-- を持つにもかかわらずしまむら(8227)・エンチョー(8208)は売上高単独がJ-Quantsのsales
+-- と一致し、合算すると不一致になることを実機確認済み。両者の違いをXBRLタグの構造
+-- （要素ID・コンテキスト・兄弟タグの有無）から判別する手段がないため、確認済み企業の
+-- seed一覧(edinet_sales_operating_revenue_addback)に限定して加算する。
+--
+-- 2026-10-10追加(sales、売上高への「、営業活動による収益」合計の加算): 上記とは別に、
+-- item_nameが「、営業活動による収益」で終わるタグ群（不動産賃貸収入・手数料収入等、
+-- 複数件ありうる）の合計を本業収益として別建てで開示する企業がある（イオン九州
+-- (2653)・髙島屋(8233)で実機確認）。この接尾辞は建設・リース・運送業等で「売上高の
+-- 内訳開示」としても広く使われており（既に売上高に含まれるため加算すると二重計上）、
+-- 全量検証(412文書)で79社の回帰を確認したため、タグの存在を自動検出の手がかりに
+-- するのは危険と判断した。個別にJ-Quantsとの一致を確認済みの企業のみ、専用seed
+-- (edinet_sales_sibling_revenue_addback)に限定して加算する。
+--
+-- 両addbackとも、加算対象は常に「売上高、経営指標等」タグそのもの(net_sales_tag_value)
+-- のみとし、sales_baseには加算しない(2026-10-10実機確認、重要): 髙島屋(8233)の
+-- 半期報告書で、当該期は「売上高、経営指標等」タグが存在せず、coalesceが次点の
+-- 「営業収益、経営指標等」（既に裸の営業収入・兄弟タグを含む完全な集計値）へ
+-- フォールバックしていた。この状態でsales_baseにさらに加算すると二重計上になる
+-- （実機で発覚: DWH=286,234M、正しくは243,431M、裸の営業収入等の加算分42,803Mが
+-- 二重に乗っていた）。net_sales_tag_valueが非NULLの場合のみ加算することで、
+-- 「経営指標等」が既に完全な集計値を報告している期は無条件でそれを使う。
 
 {{ config(
     materialized='external',
@@ -62,7 +89,7 @@ with target_docs as (
 ),
 
 relevant_facts as (
-    select f.doc_id, f.item_name, f.context_id, f.value_num, f.unit_id, td.doc_type_code
+    select f.doc_id, f.edinet_code, f.item_name, f.context_id, f.value_num, f.unit_id, td.doc_type_code
     from {{ ref('cleansed__edinet__facts') }} f
     inner join target_docs td on td.doc_id = f.doc_id
     where f.item_name in (
@@ -74,6 +101,7 @@ relevant_facts as (
         '当期純利益又は当期純損失（△）、経営指標等',
         '売上高、経営指標等', '営業収益、経営指標等', '経常収益、経営指標等',
         '営業収入、経営指標等', '営業総収入、経営指標等',
+        '営業収入',
         '１株当たり当期純利益又は当期純損失（△）、経営指標等',
         '１株当たり純資産額、経営指標等',
         '自己資本利益率、経営指標等',
@@ -89,11 +117,12 @@ relevant_facts as (
         '現金及び現金同等物の残高、経営指標等',
         '１株当たり配当額、経営指標等'
     )
+    or f.item_name like '%、営業活動による収益'
 ),
 
 current_period_facts as (
     select
-        doc_id, item_name, value_num, unit_id,
+        doc_id, edinet_code, item_name, value_num, unit_id,
         context_id like '%_NonConsolidatedMember' as is_non_consolidated
     from relevant_facts
     where case
@@ -108,10 +137,12 @@ with_dei as (
     select cpf.*, coalesce(d.has_consolidated, false) as has_consolidated
     from current_period_facts cpf
     left join {{ ref('intermediate__edinet__dei_facts') }} d on d.doc_id = cpf.doc_id
-)
+),
 
+aggregated as (
 select
     doc_id,
+    edinet_code,
     coalesce(
         max(case when item_name = '総資産額、経営指標等' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
         case when not bool_or(has_consolidated) then
@@ -161,7 +192,25 @@ select
                 max(case when item_name = '営業総収入、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end)
             )
         end
-    ) as sales,
+    ) as sales_base,
+    coalesce(
+        max(case when item_name = '売上高、経営指標等' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
+        case when not bool_or(has_consolidated) then
+            max(case when item_name = '売上高、経営指標等' and is_non_consolidated and unit_id = 'JPY' then value_num end)
+        end
+    ) as net_sales_tag_value,
+    coalesce(
+        max(case when item_name = '営業収入' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
+        case when not bool_or(has_consolidated) then
+            max(case when item_name = '営業収入' and is_non_consolidated and unit_id = 'JPY' then value_num end)
+        end
+    ) as bare_operating_revenue,
+    coalesce(
+        sum(case when item_name like '%、営業活動による収益' and not is_non_consolidated and unit_id = 'JPY' then value_num end),
+        case when not bool_or(has_consolidated) then
+            sum(case when item_name like '%、営業活動による収益' and is_non_consolidated and unit_id = 'JPY' then value_num end)
+        end
+    ) as sibling_revenue_total,
     coalesce(
         max(case when item_name = '１株当たり当期純利益又は当期純損失（△）、経営指標等' and not is_non_consolidated and unit_id = 'JPYPerShares' then value_num end),
         case when not bool_or(has_consolidated) then
@@ -245,4 +294,35 @@ select
         max(case when item_name = '１株当たり配当額、経営指標等' and is_non_consolidated and unit_id = 'JPYPerShares' then value_num end)
     ) as dividend_per_share
 from with_dei
-group by doc_id
+group by doc_id, edinet_code
+)
+
+select
+    a.doc_id,
+    a.total_assets,
+    a.net_assets,
+    a.equity_ratio,
+    a.ordinary_income,
+    a.net_income,
+    case
+        when ob.edinet_code is not null and a.net_sales_tag_value is not null then a.net_sales_tag_value + coalesce(a.bare_operating_revenue, 0)
+        when ob2.edinet_code is not null and a.net_sales_tag_value is not null then a.net_sales_tag_value + coalesce(a.sibling_revenue_total, 0)
+        else a.sales_base
+    end as sales,
+    a.eps,
+    a.bps,
+    a.roe,
+    a.per,
+    a.operating_cf,
+    a.investing_cf,
+    a.financing_cf,
+    a.capital,
+    a.payout_ratio,
+    a.shares_outstanding,
+    a.diluted_eps,
+    a.comprehensive_income,
+    a.cash_and_equivalents,
+    a.dividend_per_share
+from aggregated a
+left join {{ ref('edinet_sales_operating_revenue_addback') }} ob on ob.edinet_code = a.edinet_code
+left join {{ ref('edinet_sales_sibling_revenue_addback') }} ob2 on ob2.edinet_code = a.edinet_code
