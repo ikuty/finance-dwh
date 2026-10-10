@@ -1,0 +1,52 @@
+version: 2
+
+seeds:
+  - name: edinet_sales_operating_revenue_addback
+    description: >
+      連結の売上高（経営指標等）に加え、裸の営業収入タグ(jppfs_cor:OperatingRevenue2、
+      、経営指標等の接尾辞なし)を本業収益として別建てで開示している企業の一覧
+      （2026-10-10のJ-Quants比較調査で確認）。該当企業は売上高単独ではJ-Quantsの
+      sales（決算短信サマリーの売上高）と一致せず、売上高+営業収入の合計が一致する。
+      一方、同じXBRL要素(jppfs_cor:OperatingRevenue2)を持つにもかかわらず、しまむら
+      (8227)・エンチョー(8208)は売上高単独がJ-Quantsのsalesと一致し、合算すると
+      むしろ不一致になることを実機確認済み。両者の違いをXBRLタグの構造から判別する
+      手段がないため（要素ID・コンテキスト・兄弟タグの有無いずれも同一）、個別企業の
+      確認済みリストとして管理する。このリストに無い企業は既存の優先順位coalesce
+      （売上高を優先）がそのまま適用される。
+    config:
+      column_types:
+        edinet_code: varchar
+    columns:
+      - name: edinet_code
+        description: "対象企業のEDINETコード。"
+        data_tests: [not_null, unique]
+      - name: filer_name
+        description: "確認時点の提出者名（参考情報）。"
+        data_tests: [not_null]
+      - name: note
+        description: "該当と判断した根拠の要約（参考情報）。"
+        data_tests: [not_null]
+
+  - name: edinet_sales_sibling_revenue_addback
+    description: >
+      連結の売上高（経営指標等）に加え、item_nameが「、営業活動による収益」で終わる
+      タグ群（不動産賃貸収入・手数料収入等、複数件ありうる）の合計を本業収益として
+      別建てで開示している企業の一覧（2026-10-10のJ-Quants比較調査で確認）。
+      edinet_sales_operating_revenue_addbackと異なり、この接尾辞は建設・リース・
+      運送業等で「売上高の内訳開示」としても広く使われており（既に売上高に含まれる
+      ため加算すると二重計上）、全量検証(412文書)で79社の回帰を確認した。タグの
+      存在を自動検出の手がかりにするのは危険なため、個別にJ-Quantsとの一致を
+      確認済みの企業のみをこのリストで管理する。
+    config:
+      column_types:
+        edinet_code: varchar
+    columns:
+      - name: edinet_code
+        description: "対象企業のEDINETコード。"
+        data_tests: [not_null, unique]
+      - name: filer_name
+        description: "確認時点の提出者名（参考情報）。"
+        data_tests: [not_null]
+      - name: note
+        description: "該当と判断した根拠の要約（参考情報）。"
+        data_tests: [not_null]
