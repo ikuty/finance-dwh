@@ -91,6 +91,34 @@
 -- YTDを優先し単独四半期にフォールバックするcoalesceに変更する。他の指標は常に
 -- 片方のみのため変更不要（正規表現自体をYTD限定に変更すると総資産額等38,629文書分
 -- のデータが失われるため、個別項目を狭く直す方針を取った）。
+--
+-- 2026-10-11追加(eps/bpsの異常値フォールバック、企業ごとのパッチ): 一部企業は
+-- 経営指標等のEPS/BPSタグ自体が桁違いに大きい異常値になる（提出者側のXBRL生成
+-- ソフトの不具合と推定、養命酒製造(2540)・Eストアー(4304)・カオナビ(4435)・
+-- トナミHD(9070)で実機確認。net_income/net_assets/shares_outstandingという土台
+-- データは全社正常で、EPS/BPSタグだけが異常）。4社とも過去の全期間は正常な値
+-- だったため、無条件の差し替えではなく、既存の妥当性チェック
+-- (assert_mart__edinet__financial_indicators_eps_bps_plausible)と同じ閾値
+-- (絶対値100万超)に該当する期だけ、net_income(またはnet_assets)を自己株式数を
+-- 除いた発行済株式数で除した近似値に差し替える。期中加重平均株数ではなく期末
+-- 株数を使うため完全な値ではなく近似値（カオナビは期中新株発行の影響でJ-Quants比
+-- 約2.6%差とやや精度が劣るが、元の異常値よりは大幅に改善する）。対象企業は
+-- seed(edinet_eps_bps_implausible_fallback)で個別管理する。
+--
+-- 2026-10-11追加(bpsフォールバックの精度改善、非支配株主持分の除外): net_assets
+-- (経営指標等の純資産額)は連結総額であり非支配株主持分を含むため、そのまま発行済
+-- 株式数で除すると親会社株主帰属分の実態より大きくなる（実機確認: Eストアー(4304)
+-- で非支配株主持分を考慮しない場合BPS誤差約5%、考慮すると0.01円差まで縮小）。
+-- 非支配株主持分タグがある企業のみ差し引く(2540は非連結企業のためタグが存在せず
+-- 対象外、差し引き不要)。
+--
+-- 2026-10-11追加(diluted_epsへのフォールバック拡張): diluted_eps(経営指標等の
+-- 潜在株式調整後EPS)も同じ提出者側XBRL不具合の影響を受ける(カオナビ(4435)で実機
+-- 確認)。eps修正後、diluted_epsが異常値のまま残ると
+-- assert_mart__edinet__financial_indicators_diluted_eps_lte_epsが新たに警告する
+-- (修正前は両方異常値で大小関係がたまたま成立していたため警告していなかった)。
+-- 希薄化後の正確な株式数を算出する追加データが無いため、diluted_epsのフォールバック
+-- 値はeps（修正後）と同値とする（diluted_eps<=epsの制約を自然に満たす）。
 
 {{ config(
     materialized='external',
@@ -154,6 +182,76 @@ with_dei as (
     select cpf.*, coalesce(d.has_consolidated, false) as has_consolidated
     from current_period_facts cpf
     left join {{ ref('intermediate__edinet__dei_facts') }} d on d.doc_id = cpf.doc_id
+),
+
+-- eps/bpsフォールバック用の自己株式数。seed対象企業に限定して抽出する(全量では
+-- 自己株式・相互保有株式のcontext_idパターンが複数混在し、企業ごとに事情が異なる
+-- ため、確認済みの4社以外には適用しない)。'%TreasurySharesEtcMember'は「自己株式」
+-- と「相互保有株式」の両方にマッチし、トナミHD(9070)は両方を合算して初めて
+-- J-Quantsの値に近づくことを実機確認済み。
+treasury_shares_facts as (
+    select f.doc_id, f.value_num
+    from {{ ref('cleansed__edinet__facts') }} f
+    inner join {{ ref('edinet_eps_bps_implausible_fallback') }} fb on fb.edinet_code = f.edinet_code
+    where f.item_name = '株式数（株）、発行済株式、議決権の状況'
+      and f.context_id like 'CurrentYearInstant%TreasurySharesEtcMember'
+      and f.unit_id = 'shares'
+      and f.value_num is not null
+),
+
+treasury_shares_agg as (
+    select doc_id, sum(value_num) as treasury_shares
+    from treasury_shares_facts
+    group by doc_id
+),
+
+-- bpsフォールバック用の非支配株主持分。net_assets(経営指標等の純資産額)は連結総額
+-- (非支配株主持分を含む)のため、親会社株主帰属分に絞るために差し引く(2026-10-11
+-- 実機確認: 差し引かないとEstore(4304)で約5%の誤差。2540は非連結企業のため
+-- このタグ自体が存在せず対象外、差し引き不要)。
+non_controlling_interests_facts as (
+    select f.doc_id, f.value_num
+    from {{ ref('cleansed__edinet__facts') }} f
+    inner join {{ ref('edinet_eps_bps_implausible_fallback') }} fb on fb.edinet_code = f.edinet_code
+    where f.item_name = '非支配株主持分'
+      and f.context_id = 'CurrentYearInstant'
+      and f.unit_id = 'JPY'
+      and f.value_num is not null
+),
+
+non_controlling_interests_agg as (
+    select doc_id, sum(value_num) as non_controlling_interests
+    from non_controlling_interests_facts
+    group by doc_id
+),
+
+-- eps/bpsフォールバック用の発行済株式総数。seed対象企業(4304・4435・9070)は連結
+-- 決算のある企業だが、「発行済株式総数（普通株式）、経営指標等」タグが個別
+-- (NonConsolidatedMember)コンテキストのみにしか存在しない(実機確認)。既存の
+-- shares_outstandingは「完全に非連結の企業のみ個別値にフォールバックする」制限が
+-- あり、この3社では対象外のためNULLになる(本来は発行済株式総数自体が親会社単位の
+-- 事実であり連結/個別で値が変わる概念ではないため、dividend_per_shareと同様に
+-- 連結有無を問わず個別値を使うべきだが、全量影響が未検証のため既存のshares_
+-- outstandingは変更せず、このフォールバック専用に別途抽出する)。
+shares_outstanding_fallback_facts as (
+    select f.doc_id, f.context_id, f.value_num
+    from {{ ref('cleansed__edinet__facts') }} f
+    inner join {{ ref('edinet_eps_bps_implausible_fallback') }} fb on fb.edinet_code = f.edinet_code
+    where f.item_name = '発行済株式総数（普通株式）、経営指標等'
+      and f.context_id like 'CurrentYearInstant%'
+      and f.unit_id = 'shares'
+      and f.value_num is not null
+),
+
+shares_outstanding_fallback_agg as (
+    select
+        doc_id,
+        coalesce(
+            max(case when context_id not like '%_NonConsolidatedMember' then value_num end),
+            max(case when context_id like '%_NonConsolidatedMember' then value_num end)
+        ) as shares_outstanding_fb
+    from shares_outstanding_fallback_facts
+    group by doc_id
 ),
 
 aggregated as (
@@ -356,8 +454,20 @@ select
         when ob2.edinet_code is not null and a.net_sales_tag_value is not null then a.net_sales_tag_value + coalesce(a.sibling_revenue_total, 0)
         else a.sales_base
     end as sales,
-    a.eps,
-    a.bps,
+    case
+        when fb.edinet_code is not null and a.eps is not null and abs(a.eps) > 1000000
+             and a.net_income is not null and ts.treasury_shares is not null and so.shares_outstanding_fb is not null
+             and (so.shares_outstanding_fb - ts.treasury_shares) != 0
+        then a.net_income / (so.shares_outstanding_fb - ts.treasury_shares)
+        else a.eps
+    end as eps,
+    case
+        when fb.edinet_code is not null and a.bps is not null and abs(a.bps) > 1000000
+             and a.net_assets is not null and ts.treasury_shares is not null and so.shares_outstanding_fb is not null
+             and (so.shares_outstanding_fb - ts.treasury_shares) != 0
+        then (a.net_assets - coalesce(nci.non_controlling_interests, 0)) / (so.shares_outstanding_fb - ts.treasury_shares)
+        else a.bps
+    end as bps,
     a.roe,
     a.per,
     a.operating_cf,
@@ -366,10 +476,20 @@ select
     a.capital,
     a.payout_ratio,
     a.shares_outstanding,
-    a.diluted_eps,
+    case
+        when fb.edinet_code is not null and a.diluted_eps is not null and abs(a.diluted_eps) > 1000000
+             and a.net_income is not null and ts.treasury_shares is not null and so.shares_outstanding_fb is not null
+             and (so.shares_outstanding_fb - ts.treasury_shares) != 0
+        then a.net_income / (so.shares_outstanding_fb - ts.treasury_shares)
+        else a.diluted_eps
+    end as diluted_eps,
     a.comprehensive_income,
     a.cash_and_equivalents,
     a.dividend_per_share
 from aggregated a
 left join {{ ref('edinet_sales_operating_revenue_addback') }} ob on ob.edinet_code = a.edinet_code
 left join {{ ref('edinet_sales_sibling_revenue_addback') }} ob2 on ob2.edinet_code = a.edinet_code
+left join {{ ref('edinet_eps_bps_implausible_fallback') }} fb on fb.edinet_code = a.edinet_code
+left join treasury_shares_agg ts on ts.doc_id = a.doc_id
+left join shares_outstanding_fallback_agg so on so.doc_id = a.doc_id
+left join non_controlling_interests_agg nci on nci.doc_id = a.doc_id
