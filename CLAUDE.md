@@ -5,6 +5,12 @@ mart の 3 層からなる DWH を、同じ Mac Mini 上に **DuckDB + dbt Core�
 Prefect + docker compose** で構築する。全体像は `docs/architecture.md`、raw/landing の
 抽出詳細は `docs/raw_landing_design.md`、デプロイは `docs/deployment_design.md`。
 
+**mart層の指標（算出方法・計算式・企業固有パッチ等）は常に `docs/mart_indicators.md`
+に記載する。** `dbt/models/mart/*.sql`・`dbt/models/intermediate/*.sql`の指標定義を
+追加・変更した場合は、同じ変更の中で必ず`docs/mart_indicators.md`も最新の状態に
+更新すること（正とするのは常にSQL本体、このドキュメントはその要約）。常に可読性を
+意識し、**表で構造を理解させることを優先し、表の外の文章は最小限**にすること。
+
 **2026-09-11: PostgreSQL + file_fdw から DuckDB + Parquet へ全面移行した**（下記参照）。
 旧 Postgres 実装は git 履歴（`afc45c7`〜`5ea9b52`）に残る。
 
