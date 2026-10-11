@@ -51,7 +51,10 @@ fin_summary(検証時のみ手動実行で作成)とmart__jpx_edinet__quarterly_
     DWH値をperiod_end_cum_adjで除するとJ-Quants値と一致する、または僅かな丸め
     誤差内で一致することを確認)。「DWH値 ÷ period_end_cum_adj ≈ J-Quants値」
     (許容誤差は係数の逆数に比例、開示値自体の円単位丸めが除算で拡大されるため)
-    であれば一致とみなす。
+    であれば一致とみなす。ただし分割調整を試す前に、無調整での差が0.01円以内
+    かどうかを必ず先に確認する(2026-10-11実機確認。詳細はperiod_adjusted_matches
+    のdocstring参照。これを省くとadj!=1.0の企業で分割と無関係な通常の丸め誤差が
+    数百倍に拡大され、誤って不一致と判定される)。
 """
 
 from __future__ import annotations
@@ -179,14 +182,29 @@ def period_adjusted_matches(dwh_v: Numeric | None, jq_v: Numeric | None, adj: fl
     参照)。period_end_cum_adjで除した値が一致すれば一致とみなす。開示値自体が
     円単位で丸められているため、許容誤差は係数の逆数に比例して拡大する
     (0.01 / adj、実機データで確認した誤差幅に基づく。例: adj=0.1なら許容誤差0.1円)。
+
+    分割調整を試す前に、無調整での差が0.01円以内かどうかを必ず先に確認する
+    (2026-10-11実機確認、重要): DWH値はEDINET開示タグそのものであり、J-Quants側が
+    同じ開示を独自に再集計する過程でちょうど1円単位（セント）分だけ異なることが
+    ある（分割とは無関係な、通常のレベルの丸め誤差）。この確認を省くと2種類の
+    誤判定が起きる: (1) adj=1.0でも浮動小数点演算により`0.01`が`0.010000000000005`
+    のようにわずかに超えてしまい、本来等しい値が不一致と判定される。(2) adjが
+    1.0以外（過去に分割があった企業）の場合、無調整の差が0.01円程度でも
+    `dwh_v / adj`で無理に調整しようとして誤差が数百倍に拡大し、分割と無関係な
+    通常の丸め誤差が重大な不一致に見えてしまう（例: adj=0.25の企業で12.23→12.24
+    の0.01円差が、48.92 vs 12.24という全く無関係な値の比較になる）。
     """
     if dwh_v is None or jq_v is None:
         return None
-    if float(dwh_v) == float(jq_v):
+    dwh_f = float(dwh_v)
+    jq_f = float(jq_v)
+    if dwh_f == jq_f:
+        return True
+    if round(abs(dwh_f - jq_f), 2) <= 0.01:
         return True
     if adj is None or adj == 0:
         return False
-    return abs(float(dwh_v) / adj - float(jq_v)) < (0.01 / abs(adj))
+    return abs(dwh_f / adj - jq_f) < (0.01 / abs(adj))
 
 
 def shares_matches(dwh_v: Numeric | None, jq_v: Numeric | None, adj: float | None) -> bool | None:
