@@ -28,9 +28,20 @@ def test_sales_matches_allows_million_yen_rounding() -> None:
     assert sales_matches(Decimal("12716937000.0000"), Decimal("12717000000.00")) is True
 
 
-def test_period_adjusted_matches_requires_identical_value_when_no_adjustment() -> None:
+def test_period_adjusted_matches_requires_near_identical_value_when_no_adjustment() -> None:
     assert period_adjusted_matches(Decimal("121.6000"), Decimal("121.6000"), None) is True
-    assert period_adjusted_matches(Decimal("121.6000"), Decimal("121.6001"), None) is False
+    assert period_adjusted_matches(Decimal("121.60"), Decimal("121.62"), None) is False
+
+
+def test_period_adjusted_matches_allows_small_rounding_without_adjustment() -> None:
+    # 実機ケース(2026-10-11): DWH値はEDINET開示タグそのものだが、J-Quants側が
+    # 同じ開示を独自に再集計する過程で分割と無関係に0.01円だけ異なることがある
+    # (1833等、adj=1.0でも浮動小数点誤差で`< 0.01`の境界判定に失敗していた)。
+    assert period_adjusted_matches(Decimal("74.00"), Decimal("74.01"), 1.0) is True
+    # adjが1.0以外(過去に分割があった企業)でも、無調整の差が0.01円なら分割調整を
+    # 試みず一致とみなす(1861等、adj=0.25で誤って48.92 vs 12.24のような無関係な
+    # 比較になり重大な不一致に見えていた)。
+    assert period_adjusted_matches(Decimal("12.23"), Decimal("12.24"), 0.25) is True
 
 
 def test_period_adjusted_matches_none_when_either_side_missing() -> None:
