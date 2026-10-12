@@ -27,6 +27,30 @@ seeds:
         description: "該当と判断した根拠の要約（参考情報）。"
         data_tests: [not_null]
 
+  - name: edinet_eps_bps_implausible_fallback
+    description: >
+      経営指標等のEPS/BPSタグ自体が桁違いに大きい異常値になる(提出者側のXBRL生成
+      ソフト起因と推定、2026-10-11実機確認)企業の一覧。該当企業かつ当該指標が
+      `assert_mart__edinet__financial_indicators_eps_bps_plausible`と同じ閾値
+      (絶対値100万を超える)の期のみ、net_income(またはnet_assets)を自己株式数を
+      除いた発行済株式数で除した近似値に差し替える。4社とも過去の全期間は正常な
+      値だったため、無条件の差し替えではなく異常値の期だけに限定する(期中加重
+      平均株数ではなく期末株数を使うため完全な値ではなく近似値であることに留意。
+      カオナビ(E34712)は期中新株発行の影響でJ-Quants比約2.6%差とやや精度が劣る)。
+    config:
+      column_types:
+        edinet_code: varchar
+    columns:
+      - name: edinet_code
+        description: "対象企業のEDINETコード。"
+        data_tests: [not_null, unique]
+      - name: filer_name
+        description: "確認時点の提出者名（参考情報）。"
+        data_tests: [not_null]
+      - name: note
+        description: "該当と判断した根拠の要約（参考情報）。"
+        data_tests: [not_null]
+
   - name: edinet_sales_sibling_revenue_addback
     description: >
       連結の売上高（経営指標等）に加え、item_nameが「、営業活動による収益」で終わる
