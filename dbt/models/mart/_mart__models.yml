@@ -111,7 +111,10 @@ models:
         description: "対象期間の終了日。"
         data_tests: [not_null]
       - name: sec_code
-        description: "証券コード。"
+        description: >
+          証券コード。cleansed__edinet__report_periods経由（書類一覧APIのsecCode由来）
+          は常にNULLのため、intermediate__edinet__dei_facts.sec_code（証券コード、DEI
+          由来）で補っている（2026-10-13修正、カバレッジ725件中696件=96%）。
       - name: filer_name
         description: "提出者名。"
       - name: period_type
