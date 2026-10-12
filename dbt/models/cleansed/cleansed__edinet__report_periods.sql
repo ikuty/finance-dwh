@@ -6,11 +6,17 @@
 -- 粒度は cleansed__edinet__documents と同じ(1行=1書類)。cleansed__edinet__facts
 -- （1行=1書類内の1項目）の集計はしない。
 --
--- filer_category(company/fund)の分離(2026-09-19決定):
+-- filer_category(company/fund/reit)の分離(2026-09-19決定、2026-10-12にreit追加):
 --   EDINET提出者には、通常の事業会社に加えて投資信託受益証券等のファンド型が
 --   混在する(実機確認: ordinance_code='030'、全体の0.04%程度)。JPX側の
 --   security_category_ja分離と同じ考え方で、ordinance_code='030'をfundとして
 --   独立した属性にする。
+--   REIT（投資法人）もordinance_code='030'を共有するが、投資信託（ミューチュアル
+--   ファンド等）とは財務指標の意味が大きく異なる（詳細はedinet-dl側の
+--   services/ir-disclosure-dl/docs/reit_support_design.md参照）ため、
+--   form_codeが'07B'/'10B'で始まる書類は'fund'とは別に'reit'として独立させる
+--   （ordinance_code='030'の判定より先に評価する必要がある、REITもこの値を
+--   共有するため）。
 --
 -- regime(旧制度/移行期/新制度)の判定方式(2026-09-19決定、重要):
 --   2024年度から、四半期報告書(第1・第3四半期)の提出義務が廃止され、半期報告書に
@@ -82,7 +88,11 @@ base as (
         d.edinet_code,
         d.sec_code,
         d.filer_name,
-        case when d.ordinance_code = '030' then 'fund' else 'company' end as filer_category,
+        case
+            when d.form_code like '07B%' or d.form_code like '10B%' then 'reit'
+            when d.ordinance_code = '030' then 'fund'
+            else 'company'
+        end as filer_category,
         nullif(regexp_extract(d.doc_description, '第([0-9]+)期', 1), '')::integer as fiscal_year,
         case
             when d.doc_type_code in ('120', '130') then 'annual'
