@@ -356,3 +356,40 @@ models:
           本体の予想セクションは「2027年8月期の連結業績予想」）。
       - name: _loaded_at
         description: "DWH取り込み時刻(UTC)。"
+
+  - name: cleansed__ir_disclosure__reit_ixbrl_facts
+    description: >
+      ir-disclosure-dlが取得するREIT(投資法人)決算短信iXBRLの型付け版（毎回フル
+      rebuild、Parquet）。粒度は1行=1書類(docid)内の1要素×1context（縦持ち、
+      cleansed__edinet__factsと同じ形）。どのcontext_idが「当期の実績」かの解釈は
+      ここでは行わない（intermediate層に委ねる、詳細はモデルSQL冒頭コメント参照）。
+    columns:
+      - name: docid
+        description: "JPX上場会社情報サービス側のXBRL文書ID(iXBRLファイル名由来、PDFのdocidとは別の番号体系)。"
+        data_tests: [not_null]
+      - name: edinet_code
+        description: "提出REITのEDINETコード(ir-disclosure-dlのメタデータJSON由来の素通し)。"
+        data_tests: [not_null]
+      - name: sec_code
+        description: "証券コード(ir-disclosure-dlのメタデータJSON由来の素通し)。"
+      - name: period_end
+        description: >
+          決算短信タイトルの「YYYY年M月期」から算出した期間末日（実日付）。
+          REITには四半期決算短信が無くタイトルの「期」が開示対象期間そのものを
+          指すため、ir_disclosure_kessan_facts.compute_period_endをperiod_type=
+          "annual"固定で適用する（詳細はload_ir_disclosure_reit.pyのdocstring参照）。
+          intermediate__edinet__reit_financial_facts(Phase 3)がEDINET側の
+          period_endと結合するキー。
+      - name: element_id
+        description: "tse-re-t:タクソノミの要素名(例: 'tse-re-t:NetIncomePerUnitREIT')。"
+        data_tests: [not_null]
+      - name: context_id
+        description: >
+          contextRef(例: 'CurrentYearInstant_NonConsolidatedMember_ResultMember'。
+          CurrentYear=当期・PriorYear=前期・NextYear/Next2Year=予想、
+          ForecastMember/UpperMember/LowerMemberで予想の種類を区別)。
+        data_tests: [not_null]
+      - name: unit_ref
+        description: "unitRef(例: 'JPY'・'JPYPerUnits'・'Units'・'Pure')。"
+      - name: value_num
+        description: "scale・signを適用済みの実際の値(landing層のir_disclosure_reit_ixbrl.py参照)。値が無い(xsi:nil)場合NULL。"
