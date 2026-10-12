@@ -2,7 +2,10 @@ version: 2
 
 models:
   - name: cleansed__edinet__documents
-    description: "書類一覧インデックスの型付け版（上場会社の書類のみ、毎回フル rebuild、Parquet）。"
+    description: >
+      書類一覧インデックスの型付け版（上場会社・REITの書類、毎回フル rebuild、Parquet）。
+      REITはsec_codeが常にnullのため、form_codeが'07B'/'10B'で始まる書類も対象に含める
+      （2026-10-12追加）。
     columns:
       - name: doc_id
         data_tests: [not_null, unique]
@@ -47,12 +50,14 @@ models:
       - name: filer_category
         description: >
           提出者区分。事業会社は'company'、投資信託受益証券等のファンド型は'fund'
-          （ordinance_code='030'により判定）。
+          （ordinance_code='030'により判定）、REIT（投資法人）は'reit'
+          （form_codeが'07B'/'10B'で始まる書類、2026-10-12追加。ordinance_code='030'を
+          'fund'と共有するため先に判定する）。
         data_tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ["company", "fund"]
+                values: ["company", "fund", "reit"]
       - name: fiscal_year
         description: >
           事業年度の期数（doc_descriptionの「第X期」から抽出）。ごく少数、
@@ -77,7 +82,7 @@ models:
         description: >
           事業会社の開示制度区分。旧制度(四半期報告書あり)/移行期(四半期・半期
           報告書とも無し)/新制度(半期報告書あり)を、同一(edinet_code, fiscal_year)
-          内の実際の書類種別の存在有無から判定する。filer_category='fund'または
+          内の実際の書類種別の存在有無から判定する。filer_category='fund'/'reit'または
           fiscal_yearがNULLの行は常にNULL。
       - name: submit_date_time
         description: "提出日時。"

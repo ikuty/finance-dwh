@@ -1,10 +1,17 @@
--- 書類一覧インデックスの型付け版（上場会社の書類のみ）。
+-- 書類一覧インデックスの型付け版（上場会社・REITの書類）。
 -- raw__edinet_document_index（DuckDB でレイクの JSON を毎回直接読む view）を
 -- 元に、型付け・名寄せして Parquet へ書き出す（external materialization、
 -- 常に全量 rebuild。DuckDB は高速なので incremental 化は不要と判断）。
 --
 -- 同じ docID が複数日の document_list.json に出現しうる（後日メタデータが編集され
 -- 再掲載されるため）ので、docID ごとに最新の掲載（file_date → ope_date_time）だけ残す。
+--
+-- REIT（投資法人）対応（2026-10-12追加）:
+--   EDINETの書類一覧APIはREIT（投資法人）のsec_codeを常にnullで返す（実機確認、
+--   edinet-dl側のCLAUDE.md参照）ため、sec_code is not nullだけの絞り込みでは
+--   REITの書類が一件も残らなかった。form_codeが'07B'/'10B'（REIT等の投資証券の
+--   有報/半期報告書、訂正含む）で始まる書類も対象に含める。詳細・実機確認結果は
+--   edinet-dl側の services/ir-disclosure-dl/docs/reit_support_design.md 参照。
 
 {{ config(
     materialized='external',
@@ -25,6 +32,8 @@ ranked as (
         ) as _rn
     from src
     where nullif(sec_code, '') is not null
+       or form_code like '07B%'
+       or form_code like '10B%'
 )
 
 select
