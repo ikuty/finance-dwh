@@ -20,7 +20,10 @@ import ir_disclosure_kessan_pdf
 from flows import load_ir_disclosure_kessan as m
 
 
-def make_kessan_pdf(lake: Path, date: str, edinet_code: str, docid: str, disclosure_kind: str = "kessan_tanshin") -> Path:
+def make_kessan_pdf(
+    lake: Path, date: str, edinet_code: str, docid: str, disclosure_kind: str = "kessan_tanshin",
+    ixbrl_url: str | None = None,
+) -> Path:
     """レイクにPDF(中身はダミー)とメタデータJSONを置く(ir-disclosure-dlのbuild_pdf_metadata
     が実際に作る形式を模す)。"""
     yyyy, mm, dd = date.split("-")
@@ -39,6 +42,7 @@ def make_kessan_pdf(lake: Path, date: str, edinet_code: str, docid: str, disclos
         "jpx_disclosure_date": date.replace("-", "/"),
         "jpx_title": "2027年５月期第１四半期決算短信〔日本基準〕（連結）",
         "pdf_url": f"https://www2.jpx.co.jp/disc/13010/{docid}.pdf",
+        "ixbrl_url": ixbrl_url,
     }
     (dest_dir / f"{docid}.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
     return pdf_path
@@ -78,6 +82,22 @@ def test_disk_dates_requires_kessan_tanshin_metadata(tmp_path: Path) -> None:
 
 def test_disk_dates_empty_when_no_lake(tmp_path: Path) -> None:
     assert m.disk_dates(tmp_path) == set()
+
+
+def test_disk_dates_excludes_reit_ixbrl_metadata(tmp_path: Path) -> None:
+    # REIT(投資法人)はixbrl_urlを持つメタデータで判別し、事業会社向けの
+    # このパーサー(load_ir_disclosure_kessan)の対象外にする(load_ir_disclosure_reit.py
+    # 側の専用パイプラインで扱う)。
+    make_kessan_pdf(tmp_path, "2026-09-03", "E24347", "doc3", ixbrl_url="https://example/ixbrl.htm")
+
+    assert m.disk_dates(tmp_path) == set()
+
+
+def test_is_kessan_tanshin_json_rejects_reit_metadata(tmp_path: Path) -> None:
+    make_kessan_pdf(tmp_path, "2026-09-03", "E24347", "doc3", ixbrl_url="https://example/ixbrl.htm")
+    json_path = tmp_path / "ir-disclosure-dl" / "raw" / "2026" / "09" / "03" / "E24347" / "doc3.json"
+
+    assert m._is_kessan_tanshin_json(json_path) is False
 
 
 # --- landing_logged_dates / recent・backlog分割 (load_jpx_stqと同じロジックの流用確認) ---

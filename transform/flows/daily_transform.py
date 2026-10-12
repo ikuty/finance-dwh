@@ -54,6 +54,10 @@ from flows.load_ir_disclosure_kessan import (
     load_ir_disclosure_kessan_backlog,
     load_ir_disclosure_kessan_recent,
 )
+from flows.load_ir_disclosure_reit import (
+    load_ir_disclosure_reit_backlog,
+    load_ir_disclosure_reit_recent,
+)
 from flows.load_jpx_monthly_ohlc import load_jpx_monthly_ohlc_facts
 from flows.load_jpx_stq import load_jpx_stq_prices_backlog, load_jpx_stq_prices_recent
 from flows.load_mufg_corporate_actions import load_mufg_corporate_actions
@@ -252,6 +256,12 @@ def daily_transform() -> str:
         f"{ir_disclosure_loaded['dates']} 日 / {ir_disclosure_loaded['rows']} 件"
     )
 
+    ir_disclosure_reit_loaded = load_ir_disclosure_reit_recent()
+    logger.info(
+        f"landing 取り込み(ir-disclosure-dl REIT決算短信iXBRL・直近分): "
+        f"{ir_disclosure_reit_loaded['dates']} 日 / {ir_disclosure_reit_loaded['rows']} 件"
+    )
+
     # mufg-corporate-actionsは週次・3ファイルのみで処理量が常に小さいため、
     # recent/backlog分割は不要（load_mufg_corporate_actions.py参照）。
     mufg_loaded = load_mufg_corporate_actions()
@@ -287,6 +297,12 @@ def daily_transform() -> str:
     logger.info(
         f"landing 取り込み(ir-disclosure-dl決算短信・バックログ): "
         f"{ir_disclosure_backlog_loaded['dates']} 日 / {ir_disclosure_backlog_loaded['rows']} 件"
+    )
+
+    ir_disclosure_reit_backlog_loaded = load_ir_disclosure_reit_backlog()
+    logger.info(
+        f"landing 取り込み(ir-disclosure-dl REIT決算短信iXBRL・バックログ): "
+        f"{ir_disclosure_reit_backlog_loaded['dates']} 日 / {ir_disclosure_reit_backlog_loaded['rows']} 件"
     )
 
     jpx_monthly_loaded = load_jpx_monthly_ohlc_facts()
