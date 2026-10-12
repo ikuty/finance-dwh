@@ -17,6 +17,12 @@
 -- grainはedinet_code×period_end（事業会社のfiscal_year×period_typeに相当。REITは
 -- 四半期の概念が無く、period_end自体が一意な「期」を表すため、period_typeを
 -- grainに含める必要はない）。
+--
+-- sec_code(2026-10-13修正): REITは書類一覧APIのsecCodeが常にnullのため、
+-- cleansed__edinet__report_periods経由のsec_code（periods.sec_code）が全件NULLに
+-- なっていた不具合を修正（事業会社のsec_codeはこの経路で問題なく取得できている
+-- ため、このバグはREIT限定）。intermediate__edinet__dei_facts.sec_code
+-- （証券コード、DEI由来、カバレッジ725件中696件=96%）で補う。
 
 {{ config(
     materialized='external',
@@ -32,11 +38,18 @@ with periods as (
     where filer_category = 'reit' and period_end is not null
 ),
 
+-- REITのsec_code(書類一覧APIのsecCode経由、上のperiods.sec_code)は常にNULL
+-- (実機確認、2026-10-12発見)。DEIの証券コードタグ(intermediate__edinet__dei_facts.
+-- sec_code)で補う(詳細はそちらのコメント参照)。
+dei as (
+    select doc_id, sec_code from {{ ref('intermediate__edinet__dei_facts') }}
+),
+
 per_doc as (
     select
         p.doc_id,
         p.edinet_code,
-        p.sec_code,
+        coalesce(p.sec_code, d.sec_code) as sec_code,
         p.filer_name,
         p.period_type,
         p.period_start,
@@ -55,6 +68,7 @@ per_doc as (
         rf.investment_units_outstanding,
         rf.treasury_investment_units
     from periods p
+    left join dei d on d.doc_id = p.doc_id
     left join {{ ref('intermediate__edinet__reit_financial_facts') }} rf on rf.doc_id = p.doc_id
 )
 

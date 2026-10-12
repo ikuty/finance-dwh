@@ -14,6 +14,13 @@ models:
         description: "連結決算の有無。DEI「連結決算の有無、DEI」由来。"
       - name: shares_outstanding
         description: "発行済株式総数（普通株式）。「株式の総数等」開示セクション由来（会計基準・連結スコープに依存しない）。"
+      - name: sec_code
+        description: >
+          証券コード。DEI「証券コード、DEI」由来（2026-10-13追加）。REIT(投資法人)の
+          sec_codeは書類一覧APIのsecCodeが常にnullのため、cleansed__edinet__report_periods
+          経由の値が使えない（mart__edinet__reit_financial_indicators.sec_codeが全件
+          NULLになっていた不具合の修正）。通常企業は書類一覧APIのsecCodeで足りているため
+          未使用（NULLではなく値を持つ場合もあるが、report_periods側を優先する）。
 
   - name: intermediate__jpx__daily_prices
     description: >
