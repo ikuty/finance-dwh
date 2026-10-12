@@ -102,3 +102,42 @@ models:
     columns:
       - name: doc_id
         data_tests: [not_null, unique]
+
+  - name: intermediate__edinet__reit_financial_facts
+    description: >
+      書類(doc_id)単位のREIT(投資法人)財務指標（毎回フル rebuild、Parquet）。
+      絶対額系はEDINETの生タグ(jppfs_cor:)、1口当たり系・発行済投資口総数は
+      ir-disclosure-dl経由のTDnet/JPX決算短信iXBRL(tse-re-t:)から取得する
+      （EDINET側には1口当たり指標が構造化データとして存在しないため。詳細は
+      モデルSQL冒頭コメント参照）。
+    columns:
+      - name: doc_id
+        data_tests: [not_null, unique]
+      - name: edinet_code
+        data_tests: [not_null]
+      - name: period_end
+        description: "対象期間の末日(cleansed__edinet__report_periods.period_endと同じ)。"
+      - name: total_assets
+        description: "資産(jppfs_cor:Assets、経営指標等に相当する構造化集計タグが無いため生タグから取得)。"
+      - name: net_assets
+        description: "純資産(jppfs_cor:NetAssets)。"
+      - name: operating_income
+        description: "営業利益又は営業損失(jppfs_cor:OperatingIncome)。"
+      - name: ordinary_income
+        description: "経常利益又は経常損失(jppfs_cor:OrdinaryIncome)。"
+      - name: income_before_tax
+        description: "税引前当期純利益又は税引前当期純損失(jppfs_cor:IncomeBeforeIncomeTaxes)。"
+      - name: net_income
+        description: "当期純利益又は当期純損失(jppfs_cor:ProfitLoss)。"
+      - name: net_income_per_unit
+        description: "1口当たり利益、EPS相当(tse-re-t:NetIncomePerUnitREIT、ir-disclosure-dl経由)。EDINET側に対応タグが無い。"
+      - name: net_assets_per_unit
+        description: "1口当たり純資産、BPS相当(tse-re-t:NetAssetsPerUnitREIT、ir-disclosure-dl経由)。"
+      - name: distribution_per_unit
+        description: "1口当たり分配金、利益超過分配金を除く(tse-re-t:DistributionsPerUnitExcludingDistributionsInExcessOfProfitREIT)。"
+      - name: distribution_in_excess_of_profit_per_unit
+        description: "1口当たり利益超過分配金(tse-re-t:DistributionsInExcessOfProfitPerUnitREIT)。"
+      - name: investment_units_outstanding
+        description: "発行済投資口総数、自己投資口を含む(tse-re-t:NumberOfInvestmentUnitsIncludingTreasuryInvestmentUnitsIssuedAtEndOfPeriodREIT)。"
+      - name: treasury_investment_units
+        description: "自己投資口数(tse-re-t:NumberOfTreasuryInvestmentUnitsIssuedAtEndOfPeriodREIT)。"
