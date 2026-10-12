@@ -56,3 +56,13 @@ sources:
           みに入る（詳細はir_disclosure_kessan_facts.pyのdocstring参照）。
         meta:
           external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/ir_disclosure_kessan_facts/*/part.parquet', hive_partitioning=false)"
+      - name: ir_disclosure_reit_ixbrl_facts
+        description: >
+          ir-disclosure-dlが取得するREIT(投資法人)決算短信iXBRLの`tse-re-t:`タクソノミ
+          ファクト(縦持ち、全列text)。file_date=YYYY-MM-DD（TDnet検知日）で日付分割。
+          load_ir_disclosure_reit_recent/backlogタスクがir_disclosure_reit_ixbrl.
+          parse_factsを経て書く。事業会社向けのir_disclosure_kessan_factsとは別の
+          landingテーブル（データ形状が異なるため、詳細はload_ir_disclosure_reit.pyの
+          docstring参照）。
+        meta:
+          external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/ir_disclosure_reit_ixbrl_facts/*/part.parquet', hive_partitioning=false)"

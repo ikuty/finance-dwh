@@ -89,6 +89,65 @@ models:
       - name: dividend_per_share
         description: "1株当たり配当額。IFRS/US GAAP専用のitem_nameが存在せず3会計基準共通（会計基準に依存しない項目）。"
 
+  - name: mart__edinet__reit_financial_indicators
+    description: >
+      銘柄(edinet_code)×期(period_end)ごとのREIT(投資法人)主要財務指標（案B、毎回
+      フル rebuild、Parquet）。mart__edinet__financial_indicators（事業会社向け）とは
+      完全に独立したモデル（会計基準の混在・fiscal_year/regimeの概念がREITには
+      無いため、詳細はモデルSQL冒頭コメント参照）。grainはedinet_code×period_end
+      （事業会社のfiscal_year×period_typeに相当）。
+    columns:
+      - name: doc_id
+        description: >
+          参照用の代表書類ID（同一期に複数提出があれば submit_date_time 最新の1件）。
+          各指標列は列ごとに最新の非NULL値を採用するため、必ずしもこの書類1件だけに
+          由来するとは限らない（mart__edinet__financial_indicatorsと同じ方式、詳細は
+          モデルSQL冒頭コメント参照）。
+        data_tests: [not_null]
+      - name: edinet_code
+        description: "EDINETコード。"
+        data_tests: [not_null]
+      - name: period_end
+        description: "対象期間の終了日。"
+        data_tests: [not_null]
+      - name: sec_code
+        description: "証券コード。"
+      - name: filer_name
+        description: "提出者名。"
+      - name: period_type
+        description: "'annual'(有報/訂正有報)/'half'(半期報告書/訂正)。REITは四半期報告書が無い。"
+      - name: period_start
+        description: "対象期間の開始日。"
+      - name: submit_date_time
+        description: "書類の提出日時（開示日）。"
+      - name: total_assets
+        description: "資産(jppfs_cor:Assets)。EDINETの生タグから取得（経営指標等に相当する構造化集計タグが無いため）。"
+      - name: net_assets
+        description: "純資産(jppfs_cor:NetAssets)。"
+      - name: operating_income
+        description: "営業利益又は営業損失(jppfs_cor:OperatingIncome)。"
+      - name: ordinary_income
+        description: "経常利益又は経常損失(jppfs_cor:OrdinaryIncome)。"
+      - name: income_before_tax
+        description: "税引前当期純利益又は税引前当期純損失(jppfs_cor:IncomeBeforeIncomeTaxes)。"
+      - name: net_income
+        description: "当期純利益又は当期純損失(jppfs_cor:ProfitLoss)。"
+      - name: net_income_per_unit
+        description: >
+          1口当たり利益、EPS相当(tse-re-t:NetIncomePerUnitREIT)。EDINET側には構造化
+          タグが存在せず、ir-disclosure-dl経由のTDnet/JPX決算短信iXBRLから取得する
+          （詳細はintermediate__edinet__reit_financial_factsのコメント参照）。
+      - name: net_assets_per_unit
+        description: "1口当たり純資産、BPS相当(tse-re-t:NetAssetsPerUnitREIT)。"
+      - name: distribution_per_unit
+        description: "1口当たり分配金、利益超過分配金を除く(tse-re-t:DistributionsPerUnitExcludingDistributionsInExcessOfProfitREIT)。"
+      - name: distribution_in_excess_of_profit_per_unit
+        description: "1口当たり利益超過分配金(tse-re-t:DistributionsInExcessOfProfitPerUnitREIT)。"
+      - name: investment_units_outstanding
+        description: "発行済投資口総数、自己投資口を含む(tse-re-t:NumberOfInvestmentUnitsIncludingTreasuryInvestmentUnitsIssuedAtEndOfPeriodREIT)。"
+      - name: treasury_investment_units
+        description: "自己投資口数(tse-re-t:NumberOfTreasuryInvestmentUnitsIssuedAtEndOfPeriodREIT)。"
+
   - name: mart__jpx_edinet__disclosed_fundamentals
     description: >
       銘柄(jpx_code)×開示(doc_id)ごとの財務指標（毎回フル rebuild、Parquet）。

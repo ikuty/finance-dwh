@@ -107,29 +107,73 @@ typed as (
         d.submit_date_time
     from facts f
     join docs d on d.doc_id = f.doc_id
-)
+),
 
 -- doc_id単位の重複排除(書類をまたいだ収縮はしない、1書類内の重複CSV行のみ対象)。
 -- file_dateはdoc_id単位で不変(1書類=1file_date)のため、この粒度でのorder by
 -- file_dateによるタイブレークは意味を持たない(2026-09-17時点の設計の名残)。
 -- row_number()のwindow計算はitem_name/value_text等の幅広い列を計算中に保持し
 -- メモリを圧迫する(Mac Mini実機でOOM実測)ため、group by + max()による集約に
--- 置き換える(同一キー内の重複行は任意の1件を採用、本来重複が無ければ結果は同じ)。
-select
-    max(file_date)          as file_date,
-    max(edinet_code)        as edinet_code,
-    doc_id,
-    max(sec_code)            as sec_code,
-    element_id,
-    max(item_name)           as item_name,
-    context_id,
-    max(relative_year)       as relative_year,
-    consolidation,
-    max(period_instant)      as period_instant,
-    max(unit_id)             as unit_id,
-    max(unit)                as unit,
-    max(value_text)          as value_text,
-    max(value_num)           as value_num,
-    max(submit_date_time)    as submit_date_time
-from typed
-group by doc_id, element_id, context_id, consolidation
+-- 置き換えた(2026-09-17)。
+--
+-- その後、REITバックフィル後の`dbt build --full-refresh`でも同種のOOMが再発した
+-- (2026-10-12実機: DuckDBプロセスがmemory_limit=12GBの設定を超えて15.8GB RSSまで
+-- 膨らみOSのOOM Killerに落とされた)。group by + max()自体も、全グループ
+-- (doc_id, element_id, context_id, consolidation)に対して一律でitem_name/
+-- value_text等の幅広い列を集約状態として保持していたことが原因と判明した
+-- (狭い列(キー4列+count(*))だけの集計を実機で検証: 全68,167,598行中、重複
+-- グループに属する行はわずか3,847,960行=5.6%、重複グループ自体は全66,170,102
+-- グループ中1,850,464=2.8%だった。この狭い列だけの集計はOOMせず完走した)。
+-- 重複が無い行(全体の94.4%)は幅広い列を保持する必要が無いにもかかわらず、
+-- 一律のgroup by + max()では同じコストを払っていた。
+-- dup_countsで重複の有無だけを先に(狭い列のみで軽量に)判定し、重複が無い行は
+-- そのまま通す(unique_rows)、重複がある行だけ従来通りmax()で集約する
+-- (deduped_rows)構造に分離することで、幅広い列を保持する集約状態のコストを
+-- 重複行(5.6%)だけに限定する。
+dup_counts as (
+    select doc_id, element_id, context_id, consolidation, count(*) as n
+    from typed
+    group by 1, 2, 3, 4
+),
+
+unique_rows as (
+    select t.*
+    from typed t
+    join dup_counts c
+        on c.doc_id = t.doc_id
+       and c.element_id = t.element_id
+       and c.context_id = t.context_id
+       and c.consolidation = t.consolidation
+    where c.n = 1
+),
+
+deduped_rows as (
+    select
+        max(t.file_date)        as file_date,
+        max(t.edinet_code)      as edinet_code,
+        t.doc_id,
+        max(t.sec_code)         as sec_code,
+        t.element_id,
+        max(t.item_name)        as item_name,
+        t.context_id,
+        max(t.relative_year)    as relative_year,
+        t.consolidation,
+        max(t.period_instant)   as period_instant,
+        max(t.unit_id)          as unit_id,
+        max(t.unit)             as unit,
+        max(t.value_text)       as value_text,
+        max(t.value_num)        as value_num,
+        max(t.submit_date_time) as submit_date_time
+    from typed t
+    join dup_counts c
+        on c.doc_id = t.doc_id
+       and c.element_id = t.element_id
+       and c.context_id = t.context_id
+       and c.consolidation = t.consolidation
+    where c.n > 1
+    group by t.doc_id, t.element_id, t.context_id, t.consolidation
+)
+
+select * from unique_rows
+union all
+select * from deduped_rows

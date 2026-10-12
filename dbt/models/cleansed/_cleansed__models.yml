@@ -2,7 +2,10 @@ version: 2
 
 models:
   - name: cleansed__edinet__documents
-    description: "書類一覧インデックスの型付け版（上場会社の書類のみ、毎回フル rebuild、Parquet）。"
+    description: >
+      書類一覧インデックスの型付け版（上場会社・REITの書類、毎回フル rebuild、Parquet）。
+      REITはsec_codeが常にnullのため、form_codeが'07B'/'10B'で始まる書類も対象に含める
+      （2026-10-12追加）。
     columns:
       - name: doc_id
         data_tests: [not_null, unique]
@@ -47,12 +50,14 @@ models:
       - name: filer_category
         description: >
           提出者区分。事業会社は'company'、投資信託受益証券等のファンド型は'fund'
-          （ordinance_code='030'により判定）。
+          （ordinance_code='030'により判定）、REIT（投資法人）は'reit'
+          （form_codeが'07B'/'10B'で始まる書類、2026-10-12追加。ordinance_code='030'を
+          'fund'と共有するため先に判定する）。
         data_tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ["company", "fund"]
+                values: ["company", "fund", "reit"]
       - name: fiscal_year
         description: >
           事業年度の期数（doc_descriptionの「第X期」から抽出）。ごく少数、
@@ -77,7 +82,7 @@ models:
         description: >
           事業会社の開示制度区分。旧制度(四半期報告書あり)/移行期(四半期・半期
           報告書とも無し)/新制度(半期報告書あり)を、同一(edinet_code, fiscal_year)
-          内の実際の書類種別の存在有無から判定する。filer_category='fund'または
+          内の実際の書類種別の存在有無から判定する。filer_category='fund'/'reit'または
           fiscal_yearがNULLの行は常にNULL。
       - name: submit_date_time
         description: "提出日時。"
@@ -351,3 +356,40 @@ models:
           本体の予想セクションは「2027年8月期の連結業績予想」）。
       - name: _loaded_at
         description: "DWH取り込み時刻(UTC)。"
+
+  - name: cleansed__ir_disclosure__reit_ixbrl_facts
+    description: >
+      ir-disclosure-dlが取得するREIT(投資法人)決算短信iXBRLの型付け版（毎回フル
+      rebuild、Parquet）。粒度は1行=1書類(docid)内の1要素×1context（縦持ち、
+      cleansed__edinet__factsと同じ形）。どのcontext_idが「当期の実績」かの解釈は
+      ここでは行わない（intermediate層に委ねる、詳細はモデルSQL冒頭コメント参照）。
+    columns:
+      - name: docid
+        description: "JPX上場会社情報サービス側のXBRL文書ID(iXBRLファイル名由来、PDFのdocidとは別の番号体系)。"
+        data_tests: [not_null]
+      - name: edinet_code
+        description: "提出REITのEDINETコード(ir-disclosure-dlのメタデータJSON由来の素通し)。"
+        data_tests: [not_null]
+      - name: sec_code
+        description: "証券コード(ir-disclosure-dlのメタデータJSON由来の素通し)。"
+      - name: period_end
+        description: >
+          決算短信タイトルの「YYYY年M月期」から算出した期間末日（実日付）。
+          REITには四半期決算短信が無くタイトルの「期」が開示対象期間そのものを
+          指すため、ir_disclosure_kessan_facts.compute_period_endをperiod_type=
+          "annual"固定で適用する（詳細はload_ir_disclosure_reit.pyのdocstring参照）。
+          intermediate__edinet__reit_financial_facts(Phase 3)がEDINET側の
+          period_endと結合するキー。
+      - name: element_id
+        description: "tse-re-t:タクソノミの要素名(例: 'tse-re-t:NetIncomePerUnitREIT')。"
+        data_tests: [not_null]
+      - name: context_id
+        description: >
+          contextRef(例: 'CurrentYearInstant_NonConsolidatedMember_ResultMember'。
+          CurrentYear=当期・PriorYear=前期・NextYear/Next2Year=予想、
+          ForecastMember/UpperMember/LowerMemberで予想の種類を区別)。
+        data_tests: [not_null]
+      - name: unit_ref
+        description: "unitRef(例: 'JPY'・'JPYPerUnits'・'Units'・'Pure')。"
+      - name: value_num
+        description: "scale・signを適用済みの実際の値(landing層のir_disclosure_reit_ixbrl.py参照)。値が無い(xsi:nil)場合NULL。"
