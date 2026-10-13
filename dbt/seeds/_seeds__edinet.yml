@@ -1,6 +1,34 @@
 version: 2
 
 seeds:
+  - name: edinet_infra_fund_issuers
+    description: >
+      REIT（投資法人）と同じform_code('07B'/'10B')を使うインフラファンド
+      （再生可能エネルギー・インフラ資産特化型の投資法人）の一覧
+      （2026-10-13、ordinance_code='030'配下の内訳調査で発見）。
+      cleansed__edinet__report_periods.filer_categoryの判定はform_codeのみに
+      依存していたため、この8社がREITと誤って同一区分('reit')に分類されていた。
+      インフラファンドはREITと異なり、決算短信のiXBRLタグが存在しない
+      （ir-disclosure-dl側で実機確認済み、1口当たり指標が構造化データとして
+      一切取得できない）ため、財務指標の意味が実質的に異なる別グループとして扱う。
+      formCode自体では両者を区別できず（実機確認、EDINET DEIタグ「別記事業（個別）、
+      DEI」もREIT・インフラファンドとも'inv'で同一）、ファンド名称のテキスト
+      パターンも将来の新規上場に対して頑健とは言えないため、個別企業の確認済み
+      リストとして管理する。
+    config:
+      column_types:
+        edinet_code: varchar
+    columns:
+      - name: edinet_code
+        description: "対象ファンドのEDINETコード。"
+        data_tests: [not_null, unique]
+      - name: filer_name
+        description: "確認時点の提出者名（参考情報）。"
+        data_tests: [not_null]
+      - name: note
+        description: "該当と判断した根拠の要約（参考情報）。"
+        data_tests: [not_null]
+
   - name: edinet_sales_operating_revenue_addback
     description: >
       連結の売上高（経営指標等）に加え、裸の営業収入タグ(jppfs_cor:OperatingRevenue2、
