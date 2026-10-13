@@ -52,12 +52,14 @@ models:
           提出者区分。事業会社は'company'、投資信託受益証券等のファンド型は'fund'
           （ordinance_code='030'により判定）、REIT（投資法人）は'reit'
           （form_codeが'07B'/'10B'で始まる書類、2026-10-12追加。ordinance_code='030'を
-          'fund'と共有するため先に判定する）。
+          'fund'と共有するため先に判定する）、インフラファンドは'infra_fund'
+          （REITとform_codeを共有するため区別できず、edinet_infra_fund_issuers
+          seedの確認済みリストで判定、2026-10-13追加。'reit'判定より先に評価する）。
         data_tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ["company", "fund", "reit"]
+                values: ["company", "fund", "reit", "infra_fund"]
       - name: fiscal_year
         description: >
           事業年度の期数（doc_descriptionの「第X期」から抽出）。ごく少数、
@@ -82,8 +84,8 @@ models:
         description: >
           事業会社の開示制度区分。旧制度(四半期報告書あり)/移行期(四半期・半期
           報告書とも無し)/新制度(半期報告書あり)を、同一(edinet_code, fiscal_year)
-          内の実際の書類種別の存在有無から判定する。filer_category='fund'/'reit'または
-          fiscal_yearがNULLの行は常にNULL。
+          内の実際の書類種別の存在有無から判定する。filer_category='fund'/'reit'/
+          'infra_fund'またはfiscal_yearがNULLの行は常にNULL。
       - name: submit_date_time
         description: "提出日時。"
       - name: doc_type_code

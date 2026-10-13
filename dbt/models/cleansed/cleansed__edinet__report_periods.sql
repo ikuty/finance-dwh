@@ -6,7 +6,8 @@
 -- 粒度は cleansed__edinet__documents と同じ(1行=1書類)。cleansed__edinet__facts
 -- （1行=1書類内の1項目）の集計はしない。
 --
--- filer_category(company/fund/reit)の分離(2026-09-19決定、2026-10-12にreit追加):
+-- filer_category(company/fund/reit/infra_fund)の分離(2026-09-19決定、2026-10-12に
+-- reit追加、2026-10-13にinfra_fund追加):
 --   EDINET提出者には、通常の事業会社に加えて投資信託受益証券等のファンド型が
 --   混在する(実機確認: ordinance_code='030'、全体の0.04%程度)。JPX側の
 --   security_category_ja分離と同じ考え方で、ordinance_code='030'をfundとして
@@ -17,6 +18,12 @@
 --   form_codeが'07B'/'10B'で始まる書類は'fund'とは別に'reit'として独立させる
 --   （ordinance_code='030'の判定より先に評価する必要がある、REITもこの値を
 --   共有するため）。
+--   インフラファンド(再生可能エネルギー・インフラ資産特化型投資法人)8社は、
+--   REITと同じform_code('07B'/'10B')を使うため上記ロジックでは'reit'に混入して
+--   しまう(2026-10-13発見)。form_code自体では区別できず(DEIタグも同一、
+--   edinet_infra_fund_issuers参照)、決算短信iXBRLが存在しないためREITと財務指標の
+--   意味が異なるので、seedの確認済みリストでREIT判定より先に除外し'infra_fund'
+--   として独立させる。
 --
 -- regime(旧制度/移行期/新制度)の判定方式(2026-09-19決定、重要):
 --   2024年度から、四半期報告書(第1・第3四半期)の提出義務が廃止され、半期報告書に
@@ -82,6 +89,10 @@ with raw_docs as (
     where doc_type_code in ('120', '130', '140', '150', '160', '170')
 ),
 
+infra_funds as (
+    select edinet_code from {{ ref('edinet_infra_fund_issuers') }}
+),
+
 base as (
     select
         d.doc_id,
@@ -89,6 +100,7 @@ base as (
         d.sec_code,
         d.filer_name,
         case
+            when inf.edinet_code is not null then 'infra_fund'
             when d.form_code like '07B%' or d.form_code like '10B%' then 'reit'
             when d.ordinance_code = '030' then 'fund'
             else 'company'
@@ -111,6 +123,7 @@ base as (
         d.form_code
     from raw_docs d
     left join raw_docs p on p.doc_id = d.parent_doc_id
+    left join infra_funds inf on inf.edinet_code = d.edinet_code
 ),
 
 regime_flags as (
