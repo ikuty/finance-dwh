@@ -12,6 +12,16 @@
 --   REITの書類が一件も残らなかった。form_codeが'07B'/'10B'（REIT等の投資証券の
 --   有報/半期報告書、訂正含む）で始まる書類も対象に含める。詳細・実機確認結果は
 --   edinet-dl側の services/ir-disclosure-dl/docs/reit_support_design.md 参照。
+--
+-- ETF（上場投資信託）対応（2026-10-17追加）:
+--   ETFのform_codeは他の国内投資信託（ETF以外）と完全に共有されており
+--   （実機確認: 07A000/04A000/10A000等）、REITのようにform_codeパターンでは
+--   一切判別できない。edinet_etf_fund_issuers seed（(edinet_code, fund_code)の
+--   確認済み複合キー、詳細はdbt/seeds/_seeds__edinet.yml参照）とのJOINで対象
+--   書類を絞り込む。sec_codeもEDINET API側は常にnullを返す（実機確認:
+--   332ファンド・5,482件全件がsecCode=null）ため、REITと異なりDEIタグからの
+--   補完もできず（主要運用会社ではDEIタグ「証券コード、DEI」も常に空）、seed
+--   に保持しているJPX ETF全銘柄一覧由来の正式なsec_codeで補完する。
 
 {{ config(
     materialized='external',
@@ -23,17 +33,26 @@ with src as (
     select * from {{ ref('raw__edinet_document_index') }}
 ),
 
+etf_funds as (
+    select edinet_code, fund_code, sec_code
+    from {{ ref('edinet_etf_fund_issuers') }}
+),
+
 ranked as (
     select
-        *,
+        s.*,
+        etf.sec_code as etf_sec_code,
         row_number() over (
-            partition by doc_id
-            order by file_date desc, nullif(ope_date_time, '') desc nulls last
+            partition by s.doc_id
+            order by s.file_date desc, nullif(s.ope_date_time, '') desc nulls last
         ) as _rn
-    from src
-    where nullif(sec_code, '') is not null
-       or form_code like '07B%'
-       or form_code like '10B%'
+    from src s
+    left join etf_funds etf
+        on etf.edinet_code = s.edinet_code and etf.fund_code = nullif(s.fund_code, '')
+    where nullif(s.sec_code, '') is not null
+       or s.form_code like '07B%'
+       or s.form_code like '10B%'
+       or etf.edinet_code is not null
 )
 
 select
@@ -41,7 +60,7 @@ select
     try_cast(seq_number as integer)                  as seq_number,
     doc_id,
     edinet_code,
-    sec_code,
+    coalesce(nullif(sec_code, ''), etf_sec_code)     as sec_code,
     nullif(jcn, '')                                  as jcn,
     filer_name,
     nullif(fund_code, '')                            as fund_code,

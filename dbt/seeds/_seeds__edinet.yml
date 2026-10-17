@@ -29,6 +29,47 @@ seeds:
         description: "該当と判断した根拠の要約（参考情報）。"
         data_tests: [not_null]
 
+  - name: edinet_etf_fund_issuers
+    description: >
+      EDINETに有価証券報告書等を提出しているETF（上場投資信託）の確認済み一覧
+      （2026-10-17追加）。edinet-dl側（services/edinet-dl/seed/
+      edinet_etf_fund_issuers.csv）と同じ332件・同じ調査結果（JPX ETF全銘柄一覧
+      とファンド名称DEIタグの名寄せ、詳細はedinet-dl側の
+      services/edinet-dl/docs/etf_fund_support_design.md参照）。
+      REIT/インフラファンドと異なり、ETFのform_codeは他の国内投資信託
+      （ETF以外のミューチュアルファンド等）と完全に共有されており
+      （実機確認: 07A000/04A000/10A000等、ETF以外も同一コードを使用）、
+      form_codeだけでは一切判別できない。また同一edinet_code（運用会社）が
+      ETFと非ETFファンドの両方を運用しているケースが3,580件存在するため
+      （実機確認）、edinet_code単体（インフラファンドと同じ方式）では判別
+      できず、(edinet_code, fund_code)の複合キーが必須。
+      sec_codeはEDINETの書類一覧APIが常にnullを返す（REITと同じ問題だが、
+      ETFはDEIタグ「証券コード、DEI」も主要運用会社では常に空のため、DEI経由の
+      補完もできない。実機確認: 全5,482件中secCode非NULLは0件）ため、
+      JPX ETF全銘柄一覧から取得した正式なsec_codeをこのseedに保持し、
+      cleansed__edinet__documentsで補完する。
+    config:
+      column_types:
+        edinet_code: varchar
+        fund_code: varchar
+        sec_code: varchar
+    columns:
+      - name: edinet_code
+        description: "対象ファンドのEDINETコード。"
+        data_tests: [not_null]
+      - name: fund_code
+        description: "対象ファンドのEDINET fundCode。edinet_codeとの複合キーで一意。"
+        data_tests: [not_null]
+      - name: sec_code
+        description: "JPX ETF全銘柄一覧から取得した正式な証券コード（EDINET APIのsecCodeは常にnull）。"
+        data_tests: [not_null]
+      - name: fund_name
+        description: "確認時点のファンド名称（参考情報）。"
+        data_tests: [not_null]
+      - name: note
+        description: "該当と判断した根拠の要約（参考情報）。"
+        data_tests: [not_null]
+
   - name: edinet_sales_operating_revenue_addback
     description: >
       連結の売上高（経営指標等）に加え、裸の営業収入タグ(jppfs_cor:OperatingRevenue2、
