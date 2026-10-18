@@ -135,7 +135,8 @@ base as (
         coalesce(d.period_end, p.period_end) as period_end,
         d.submit_date_time,
         d.doc_type_code,
-        d.form_code
+        d.form_code,
+        d.fund_code
     from raw_docs d
     left join raw_docs p on p.doc_id = d.parent_doc_id
     left join infra_funds inf on inf.edinet_code = d.edinet_code
@@ -176,7 +177,8 @@ select
     end as regime,
     b.submit_date_time,
     b.doc_type_code,
-    b.form_code
+    b.form_code,
+    b.fund_code
 from base b
 left join regime_flags rf
     on rf.edinet_code = b.edinet_code and rf.fiscal_year = b.fiscal_year

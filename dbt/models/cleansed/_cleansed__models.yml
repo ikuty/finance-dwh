@@ -98,6 +98,12 @@ models:
         description: "書類種別コード（生の値、参考）。"
       - name: form_code
         description: "様式コード（生の値、参考）。"
+      - name: fund_code
+        description: >
+          ファンドコード（cleansed__edinet__documents.fund_code、2026-10-18追加）。
+          filer_category='etf'の行でのみ非NULL（同一edinet_codeで複数ETFを運用する
+          運用会社が存在するため、ETFの銘柄識別にはedinet_codeだけでなくこの列も
+          必要。詳細はmart__edinet__etf_financial_indicatorsのコメント参照）。
 
   - name: cleansed__edinet__headquarters
     description: >
