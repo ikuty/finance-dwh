@@ -34,7 +34,13 @@ jobs:
           # （edinet-dl で実機確認済みの同種の不具合対策）。
           # git pull も併せて行い、Mac Mini 上の compose ファイル・systemd unit テンプレート・
           # dbt プロジェクトを最新に保つ（detached HEAD にはせず main のまま fast-forward）。
+          # set -euo pipefail必須(2026-10-20追加): これが無いと`git checkout main`等が
+          # 失敗しても後続コマンドが実行され続け、最後のdocker tagさえ成功すればジョブ全体が
+          # 緑になる。実機で実際に発生(Mac Mini側が他ブランチに未コミット変更を抱えたまま
+          # 残っていたためcheckoutが失敗していたが、デプロイは成功と表示されコードが
+          # 更新されていなかった)。
           script: |
+            set -euo pipefail
             cd /home/${{ secrets.MAC_MINI_USER }}/finance-dwh
             git checkout main
             git pull origin main
