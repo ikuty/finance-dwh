@@ -147,6 +147,46 @@ GitHub上のdefault branchは`main`のまま変更していない。PRのbaseは
   読み取りは高速なので、Postgres 版のような「直接数えない」制約は無い）。jpx は未移行
   のためレポートに含めない。
 
+## 2026-09-13以降の主な変更
+
+- **`cleansed__edinet__facts`をincrementalへ変更**（2026-09-17〜20）: landingが
+  813日・2.8GBまで積み上がった結果、`materialized='external'`での毎回全量
+  rebuildがdbt build全体の95%（980秒）を占めるようになったため。DuckDBネイティブ
+  テーブル（`materialized='incremental'`）＋`post_hook`でのParquetエクスポートに
+  変更した。粒度もcontext_idの意味の誤解（相対年度ラベルを絶対年度と誤認）を
+  修正し、doc_id単位（1行=1書類内の1項目）に変更した。詳細はモデルSQL冒頭コメント
+  参照。
+- **`cleansed__edinet__report_periods`を新設**（2026-09-19）: 銘柄×期の期間
+  ディメンション。`filer_category`（company/fund/reit/infra_fund/etf）・
+  `regime`（旧制度/移行期/新制度）の判定を持つ。
+- **mart層の拡充**: `mart__edinet__financial_indicators`（2026-09-20、J-GAAP/IFRS/
+  US GAAPをcoalesce）を皮切りに、`mart__jpx_edinet__disclosed_fundamentals`・
+  `mart__jpx_edinet__daily_valuation_indicators`（2026-09-26、JPX株価×開示指標）・
+  `mart__jpx_edinet__quarterly_fundamentals`（J-Quants比較検証用）を追加。J-Quants
+  API（第三者データ）との比較検証でF1〜F4の特殊処理（企業固有パッチ）を発見・
+  修正した（詳細は`docs/jquants_validation.md`・`docs/mart_indicators.md`参照）。
+- **REIT（投資法人）対応完了**（2026-10-11〜13）: EDINET書類一覧APIの`secCode`が
+  REITで常にNULLになる構造的欠落を`formCode`（`07B`/`10B`始まり）で回避。絶対額系
+  指標はEDINETの生タグ（`jppfs_cor:`、通常企業と共通）、1口当たり系（EPS/BPS相当）
+  はEDINETに構造化タグが存在しないため`ir-disclosure-dl`経由のTDnet/JPX決算短信
+  iXBRL（`tse-re-t:`）から取得する設計にした。`cleansed__ir_disclosure__reit_ixbrl_facts`・
+  `intermediate__edinet__reit_financial_facts`・`mart__edinet__reit_financial_indicators`
+  を新設。sec_codeはDEIタグで補完（REITもsecCode常時NULLのため、2026-10-13修正）。
+  本番デプロイ済み。
+- **ETF（上場投資信託）対応完了**（2026-10-17〜18）: REITと異なり`formCode`が他の
+  国内投資信託と完全に共有され判別不能、DEI証券コードタグも運用会社依存で
+  信頼できないため、`finance-lake`側でJPX公式ETF一覧とのファンド名称照合により
+  確認した`edinet_etf_fund_issuers`seed（332件、複合キー`(edinet_code, fund_code)`）
+  で判定する。1口当たり指標はTDnet/JPX決算短信がPDFのみ（iXBRL化されていない）かつ
+  ETFの市場価格が基準価額とほぼ一致する性質があるため見送り、絶対額指標のみを
+  対象にした。`intermediate__edinet__etf_financial_facts`・
+  `mart__edinet__etf_financial_indicators`を新設。実装中に`raw__edinet_document_index`の
+  JSON型推論バグ（`fund_code`等5列がDuckDBの`read_json_auto`で`JSON`型に推論され
+  `cast(... as varchar)`がJSON直列化された値を返す不具合）を発見・修正した。
+  `feature/etf-cleansed-layer`ブランチにpush済み、`dev`への昇格は未実施。
+- **`cleansed__edinet__facts`のfull-refresh時メモリ問題への対処**（2026-10-18）:
+  上記参照、「既知の制約」（`README.md`）参照。
+
 ## 依存
 
 Python 3.12。外部依存は `transform/` のみ: `dbt-core` / `dbt-duckdb` / `duckdb` /
@@ -179,19 +219,17 @@ finance-lake-shutdown.service` の `After=` には `finance-dwh-transform.servic
 既に追記済み（`finance-dwh-postgres.service` への参照はそもそも含まれていないため、
 今回の Postgres 撤去にあたって finance-lake 側の変更は不要だった）。
 
-## 現状（2026-09-13 時点）
+## 現状（2026-10-18 時点）
 
-- DuckDB/Parquet 化・Mac Mini への反映・実スケール性能検証まで完了（2026-09-12、
-  EDINET 460日/20,583,925行の landing 取り込みが約17.5分、`dbt build` が9分11秒
-  で完走、Postgres 版初回backfillの約71分から半減）。
-- JPX 形式C（株式相場表・詳細日次）の PDF テキスト化・構造化を実装・実データ
-  28日分で検証済み、Mac Mini 実機への反映・検証も完了（`raw_landing_design.md`
-  「JPX 形式C」参照）。
-- JPX 形式B（株式相場表・月次簡易OHLC、2020-01〜2025-09の69ヶ月）も実装・
-  実データ1ヶ月分（88,184行）で検証済み（`raw_landing_design.md`「JPX 形式B」
-  参照）。`daily_transform`フロー・レポートに組み込み済み。Mac Mini への
-  反映はこれから（69ヶ月分の初回バックフィルは電源枠を跨ぐ見込み）。
-- pytest 73件 / mypy --strict パス。
-- 未了: JPX 形式B分のコミット → push → Mac Mini への反映（69ヶ月バックフィル）、
-  mart 層の設計、jpx のファイル目録（raw層）・形式A・セクション1以外の取引
-  種別、Postgres 版の landing データ（Mac Mini 上の pgdata）の後始末。
+- DuckDB/Parquet化・JPX形式B/C・mufg-corporate-actions・REIT・ETF対応まで実装・
+  本番デプロイ済み（REIT・ETFは`feature/etf-cleansed-layer`のみ未昇格、上記参照）。
+  cleansed層は`cleansed__edinet__facts`のみincremental、他は全量rebuild。
+- mart層: `mart__edinet__financial_indicators`（事業会社）・
+  `mart__edinet__reit_financial_indicators`（REIT）・
+  `mart__edinet__etf_financial_indicators`（ETF）・
+  `mart__jpx_edinet__disclosed_fundamentals`/`daily_valuation_indicators`/
+  `quarterly_fundamentals`が稼働中。指標定義一覧は`docs/mart_indicators.md`。
+- 未了: ETF対応（`feature/etf-cleansed-layer`）のPR作成・レビュー・
+  `dev`→`release`→`main`への昇格。`cleansed__edinet__facts`の`max_file_date`
+  チャンク分割方式の運用手順の整備（現状は手動バッチ実行、スクリプト化は未着手）。
+  jpx のファイル目録（raw層）・形式A・セクション1以外の取引種別は未対応。

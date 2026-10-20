@@ -148,3 +148,41 @@ models:
         description: "発行済投資口総数、自己投資口を含む(tse-re-t:NumberOfInvestmentUnitsIncludingTreasuryInvestmentUnitsIssuedAtEndOfPeriodREIT)。"
       - name: treasury_investment_units
         description: "自己投資口数(tse-re-t:NumberOfTreasuryInvestmentUnitsIssuedAtEndOfPeriodREIT)。"
+
+  - name: intermediate__edinet__etf_financial_facts
+    description: >
+      書類(doc_id)単位のETF(上場投資信託)財務指標（毎回フル rebuild、Parquet）。
+      REITと同様EDINETの生タグ(jppfs_cor:)から絶対額指標のみ取得する。1口当たり
+      指標(基準価額・分配金)はTDnet/JPX決算短信がPDFのみでiXBRL化されておらず、
+      市場価格が基準価額とほぼ一致する設計上の性質もあるため対象外とした
+      (2026-10-18決定、詳細はモデルSQL冒頭コメント参照)。
+    columns:
+      - name: doc_id
+        data_tests: [not_null, unique]
+      - name: edinet_code
+        data_tests: [not_null]
+      - name: fund_code
+        description: >
+          ファンドコード。同一edinet_codeで複数ETFを運用する運用会社が存在するため、
+          edinet_codeだけでは銘柄を一意に識別できない(REITとの違い)。
+        data_tests: [not_null]
+      - name: period_end
+        description: "対象期間の末日(cleansed__edinet__report_periods.period_endと同じ)。"
+      - name: total_assets
+        description: "資産(jppfs_cor:Assets)。"
+      - name: liabilities
+        description: "負債(jppfs_cor:Liabilities)。"
+      - name: net_assets
+        description: "純資産(jppfs_cor:NetAssets)。"
+      - name: operating_income
+        description: "営業利益又は営業損失(jppfs_cor:OperatingIncome)。"
+      - name: ordinary_income
+        description: "経常利益又は経常損失(jppfs_cor:OrdinaryIncome)。"
+      - name: net_income
+        description: "当期純利益又は当期純損失(jppfs_cor:ProfitLoss)。税引前当期純利益に相当するタグはETFの開示に存在しない(実機確認)。"
+      - name: principal
+        description: "元本、投資信託(jppfs_cor:PrincipalFND)。投資信託特有の会計項目、REITには無い。"
+      - name: surplus_deficit
+        description: "剰余金又は欠損金（△）、投資信託(jppfs_cor:SurplusDeficitFND)。"
+      - name: reserve_for_distribution
+        description: "分配準備積立金、投資信託(jppfs_cor:ReserveForDistributionFND)。"

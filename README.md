@@ -67,9 +67,10 @@ CLAUDE.md      固有の設計判断
 | モデル | 層 | 役割 |
 |---|---|---|
 | `raw__edinet_document_index` | raw | EDINET書類一覧APIの生レスポンス |
-| `cleansed__edinet__documents` | cleansed | 書類一覧インデックスの型付け版（上場企業のみ） |
+| `cleansed__edinet__documents` | cleansed | 書類一覧インデックスの型付け版（上場企業＋REIT＋ETF。`filer_category`で区分） |
 | `cleansed__edinet__facts` | cleansed | EDINET CSV明細の型付け・名寄せ版（doc_id粒度、incremental） |
-| `cleansed__edinet__report_periods` | cleansed | 銘柄×期の期間ディメンション（旧制度/移行期/新制度の判定含む） |
+| `cleansed__edinet__report_periods` | cleansed | 銘柄×期の期間ディメンション（`filer_category`=company/fund/reit/infra_fund/etf、旧制度/移行期/新制度の判定含む） |
+| `cleansed__ir_disclosure__reit_ixbrl_facts` | cleansed | ir-disclosure-dl経由のREIT決算短信iXBRL（1口当たり指標、EDINETに構造化タグが無いため） |
 | `cleansed__jpx__stq_prices` | cleansed | JPX形式C（株式相場表・詳細日次）の型付け版 |
 | `cleansed__jpx__daily_ohlc` | cleansed | JPX形式B（月次簡易OHLC、データ粒度は銘柄×営業日）の型付け版 |
 | `cleansed__mufg__*` | cleansed | 商号変更・株式併合・株式分割の履歴 |
@@ -77,7 +78,16 @@ CLAUDE.md      固有の設計判断
 | `intermediate__edinet__jgaap_financial_facts` | intermediate | J-GAAP名項目のみで抽出した書類単位の14指標 |
 | `intermediate__edinet__ifrs_financial_facts` | intermediate | IFRS名項目のみで抽出した書類単位の14指標 |
 | `intermediate__edinet__usgaap_financial_facts` | intermediate | US GAAP名項目のみで抽出した書類単位の14指標 |
+| `intermediate__edinet__reit_financial_facts` | intermediate | 書類単位のREIT財務指標（絶対額＋1口当たり系） |
+| `intermediate__edinet__etf_financial_facts` | intermediate | 書類単位のETF財務指標（絶対額のみ） |
 | `mart__edinet__financial_indicators` | mart | 銘柄×期の主要財務指標（総資産額・EPS・ROE等）。企業自身のaccounting_standardを優先しつつ3つのintermediateをcoalesce |
+| `mart__edinet__reit_financial_indicators` | mart | REIT（投資法人）の銘柄(edinet_code)×期の主要財務指標 |
+| `mart__edinet__etf_financial_indicators` | mart | ETF（上場投資信託）の銘柄(edinet_code×fund_code)×期の主要財務指標 |
+| `mart__jpx_edinet__disclosed_fundamentals` | mart | 銘柄(jpx_code)×開示(doc_id)の財務指標。株価非依存の値のみ |
+| `mart__jpx_edinet__daily_valuation_indicators` | mart | 銘柄×日次のPER/PBR等（株価×直近開示の財務指標、分割・併合調整込み） |
+| `mart__jpx_edinet__quarterly_fundamentals` | mart | 銘柄×四半期の財務指標（J-Quants比較検証用、詳細は`docs/jquants_validation.md`） |
+
+各martの指標の算出方法・計算式・企業固有パッチは`docs/mart_indicators.md`に一覧化している。
 
 各モデルの列定義・テストは `dbt/models/*/_*.yml` を参照。
 
@@ -134,10 +144,18 @@ Mac Mini（Ubuntu 24.04、16GB RAM）上でsystemdタイマーにより日次実
 
 - **Mac Miniのメモリ制約**: DuckDBの`memory_limit`を明示的に制限している（実機での
   メモリ逼迫・スワップ発生を踏まえた対策）。2026-09-23にメモリを16GBに増設し、
-  制限値も3GB→12GBへ引き上げたが、大量データの一括処理（初回full-refresh等）では
-  依然バッチ分割が必要になる場合がある。
-- mart層は`mart__edinet__financial_indicators`が最初の実装（2026-09-20〜）。今後の
-  拡張は利用目的が固まってから追加する方針。
+  制限値も3GB→12GBへ引き上げたが、`memory_limit`はバッファマネージャの目標値で
+  あってRSSの絶対上限ではないため、大量データの一括処理（`cleansed__edinet__facts`
+  の`--full-refresh`等）では実際にその上限を超えてディスクスピル・OOMが発生しうる
+  （2026-10-12のREIT backfill時に実際にOOM発生、2026-10-17のETF対応時にも63GBの
+  スピルを実機確認）。`cleansed__edinet__facts.sql`に`max_file_date` var（既定none）を
+  追加し、日付レンジをチャンク分割しながら`--full-refresh`→通常incrementalを
+  繰り返すことで1回あたりの処理行数を一定以下に抑えられるようにした
+  （2026-10-18導入、詳細はモデルSQL冒頭コメント参照）。
+- mart層は`mart__edinet__financial_indicators`が最初の実装（2026-09-20〜）。REIT
+  （2026-10-12）・ETF（2026-10-18）向けに、会計基準・grainの違いから完全に独立した
+  martを追加した（`mart__edinet__reit_financial_indicators`・
+  `mart__edinet__etf_financial_indicators`、詳細は`docs/mart_indicators.md`参照）。
 - intermediate層は、会計基準(J-GAAP/IFRS/US GAAP)をまたいだcoalesceが原因のバグを
   受けて2026-09-21に導入（詳細な経緯・実データでの検証は`docs/mart_validation.md`
   参照）。

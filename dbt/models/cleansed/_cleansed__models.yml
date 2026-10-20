@@ -3,9 +3,11 @@ version: 2
 models:
   - name: cleansed__edinet__documents
     description: >
-      書類一覧インデックスの型付け版（上場会社・REITの書類、毎回フル rebuild、Parquet）。
+      書類一覧インデックスの型付け版（上場会社・REIT・ETFの書類、毎回フル rebuild、Parquet）。
       REITはsec_codeが常にnullのため、form_codeが'07B'/'10B'で始まる書類も対象に含める
-      （2026-10-12追加）。
+      （2026-10-12追加）。ETFもsec_codeが常にnullかつform_codeも判別不能なため、
+      edinet_etf_fund_issuers seedとの(edinet_code, fund_code)JOINで対象に含め、
+      sec_codeもseed保持のJPX正式コードで補完する（2026-10-17追加）。
     columns:
       - name: doc_id
         data_tests: [not_null, unique]
@@ -54,12 +56,16 @@ models:
           （form_codeが'07B'/'10B'で始まる書類、2026-10-12追加。ordinance_code='030'を
           'fund'と共有するため先に判定する）、インフラファンドは'infra_fund'
           （REITとform_codeを共有するため区別できず、edinet_infra_fund_issuers
-          seedの確認済みリストで判定、2026-10-13追加。'reit'判定より先に評価する）。
+          seedの確認済みリストで判定、2026-10-13追加。'reit'判定より先に評価する）、
+          ETF（上場投資信託）は'etf'（form_codeが他の国内投資信託と完全に共有され
+          判別不能のため、edinet_etf_fund_issuers seedの(edinet_code, fund_code)
+          複合キーで判定、2026-10-17追加。他のどの区分とも判定順序の衝突が無いため
+          最優先で評価する）。
         data_tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ["company", "fund", "reit", "infra_fund"]
+                values: ["company", "fund", "reit", "infra_fund", "etf"]
       - name: fiscal_year
         description: >
           事業年度の期数（doc_descriptionの「第X期」から抽出）。ごく少数、
@@ -85,13 +91,19 @@ models:
           事業会社の開示制度区分。旧制度(四半期報告書あり)/移行期(四半期・半期
           報告書とも無し)/新制度(半期報告書あり)を、同一(edinet_code, fiscal_year)
           内の実際の書類種別の存在有無から判定する。filer_category='fund'/'reit'/
-          'infra_fund'またはfiscal_yearがNULLの行は常にNULL。
+          'infra_fund'/'etf'またはfiscal_yearがNULLの行は常にNULL。
       - name: submit_date_time
         description: "提出日時。"
       - name: doc_type_code
         description: "書類種別コード（生の値、参考）。"
       - name: form_code
         description: "様式コード（生の値、参考）。"
+      - name: fund_code
+        description: >
+          ファンドコード（cleansed__edinet__documents.fund_code、2026-10-18追加）。
+          filer_category='etf'の行でのみ非NULL（同一edinet_codeで複数ETFを運用する
+          運用会社が存在するため、ETFの銘柄識別にはedinet_codeだけでなくこの列も
+          必要。詳細はmart__edinet__etf_financial_indicatorsのコメント参照）。
 
   - name: cleansed__edinet__headquarters
     description: >

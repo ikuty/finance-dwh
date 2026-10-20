@@ -1,4 +1,4 @@
-# mart層 指標定義一覧（2026-10-11時点）
+# mart層 指標定義一覧（2026-10-18時点）
 
 mart層の各指標について、どのような計算式・ソースで集計しているかをまとめる。
 実装が変わったらこのドキュメントも合わせて更新すること（正とするのは常に
@@ -70,6 +70,72 @@ F2・F3は同じ「加算対象は`売上高、経営指標等`タグ自体が�
 
 F1〜F4はいずれも、J-Quants API（第三者データ）との比較検証で発見した。詳細な
 調査過程・反例企業・全量検証の結果は`docs/jquants_validation.md`参照。
+
+## mart__edinet__reit_financial_indicators
+
+`mart__edinet__financial_indicators`とは完全に独立したモデル（2026-10-12決定、
+会計基準の混在・fiscal_year/regimeの概念がREITには無いため）。grain:
+`(edinet_code, period_end)`。訂正報告書対応は`mart__edinet__financial_indicators`
+と同じ「列単位のlatest-non-null」方式（指標列ごとに、その書類に値が無ければ古い
+書類から遡る）。
+
+| 列名 | 説明 | ソース |
+|---|---|---|
+| `total_assets` | 資産 | `jppfs_cor:Assets`（EDINETの生タグ、経営指標等に相当する構造化集計タグがREITには無い） |
+| `net_assets` | 純資産 | `jppfs_cor:NetAssets` |
+| `operating_income` | 営業利益又は営業損失 | `jppfs_cor:OperatingIncome` |
+| `ordinary_income` | 経常利益又は経常損失 | `jppfs_cor:OrdinaryIncome` |
+| `income_before_tax` | 税引前当期純利益又は税引前当期純損失 | `jppfs_cor:IncomeBeforeIncomeTaxes` |
+| `net_income` | 当期純利益又は当期純損失 | `jppfs_cor:ProfitLoss` |
+| `net_income_per_unit` | 1口当たり利益（EPS相当） | `tse-re-t:NetIncomePerUnitREIT`（ir-disclosure-dl経由のTDnet/JPX決算短信iXBRL。EDINET側に構造化タグが存在しないため） |
+| `net_assets_per_unit` | 1口当たり純資産（BPS相当） | `tse-re-t:NetAssetsPerUnitREIT` |
+| `distribution_per_unit` | 1口当たり分配金（利益超過分配金を除く） | `tse-re-t:DistributionsPerUnitExcludingDistributionsInExcessOfProfitREIT` |
+| `distribution_in_excess_of_profit_per_unit` | 1口当たり利益超過分配金 | `tse-re-t:DistributionsInExcessOfProfitPerUnitREIT` |
+| `investment_units_outstanding` | 発行済投資口総数（自己投資口含む） | `tse-re-t:NumberOfInvestmentUnitsIncludingTreasuryInvestmentUnitsIssuedAtEndOfPeriodREIT` |
+| `treasury_investment_units` | 自己投資口数 | `tse-re-t:NumberOfTreasuryInvestmentUnitsIssuedAtEndOfPeriodREIT` |
+
+`sec_code`: 書類一覧APIの`secCode`はREITでは常にNULLのため、
+`intermediate__edinet__dei_facts.sec_code`（DEI「証券コード、DEI」由来）で補う
+（2026-10-13修正、カバレッジ725件中696件=96%）。
+
+EDINET側（絶対額系）とir-disclosure-dl側（1口当たり系）は`edinet_code`×
+`period_end`で結合する。両者とも「当該REITの決算期末の月末日」を指すはずだが、
+全量での一致率は未検証（既知の制限）。
+
+## mart__edinet__etf_financial_indicators
+
+`mart__edinet__financial_indicators`・`mart__edinet__reit_financial_indicators`
+とは完全に独立したモデル（2026-10-18決定）。grain: `(edinet_code, fund_code,
+period_end)`（REITと異なりfund_codeが必須。同一edinet_codeで複数ETFを運用する
+運用会社が存在し、edinet_codeだけでは銘柄を一意に識別できないため）。訂正報告書
+対応は他の2つのmartと同じ「列単位のlatest-non-null」方式。
+
+1口当たり指標（基準価額・分配金）は対象外とした（2026-10-17決定）。TDnet/JPX
+決算短信がPDFのみでiXBRL化されておらず取得コストが高い一方、ETFは市場価格が
+基準価額とほぼ一致する設計上の性質（アービトラージ機構）があるため、既存の
+市場価格データ（`mart__jpx_edinet__daily_valuation_indicators`等）で代替可能と
+判断した。
+
+| 列名 | 説明 | ソース |
+|---|---|---|
+| `total_assets` | 資産 | `jppfs_cor:Assets` |
+| `liabilities` | 負債 | `jppfs_cor:Liabilities` |
+| `net_assets` | 純資産 | `jppfs_cor:NetAssets` |
+| `operating_income` | 営業利益又は営業損失 | `jppfs_cor:OperatingIncome` |
+| `ordinary_income` | 経常利益又は経常損失 | `jppfs_cor:OrdinaryIncome` |
+| `net_income` | 当期純利益又は当期純損失 | `jppfs_cor:ProfitLoss`。税引前当期純利益に相当するタグはETFの開示に存在しない（REITと異なる、実機確認） |
+| `principal` | 元本、投資信託 | `jppfs_cor:PrincipalFND`（投資信託特有の会計項目、REITには無い） |
+| `surplus_deficit` | 剰余金又は欠損金（△）、投資信託 | `jppfs_cor:SurplusDeficitFND` |
+| `reserve_for_distribution` | 分配準備積立金、投資信託 | `jppfs_cor:ReserveForDistributionFND` |
+
+`sec_code`・`fund_name`: 書類一覧APIの`secCode`はETFでも常にNULL。REIT（DEIタグで
+補完）と異なり、ETFはDEIの証券コードタグも運用会社依存で信頼できない（大和・
+ブラックロック等の主要運用会社で0%）ため、JPX公式ETF一覧とのファンド名称DEIタグ
+照合による確認済みリスト`edinet_etf_fund_issuers`（332件、`finance-lake`
+edinet-dl側で保守）から`sec_code`・`fund_name`とも補完する。`fund_code`の判定自体
+もform_codeでは一切行えない（国内投資信託全体で共有されるため）、この確認済み
+リストが唯一の判定手段になっている（詳細は
+`services/edinet-dl/docs/etf_fund_support_design.md`@finance-lake参照）。
 
 ## mart__jpx_edinet__disclosed_fundamentals
 
@@ -176,6 +242,7 @@ EPS/BPS/`shares_outstanding`は開示時点の株式数のまま。開示の決�
 | `assert_mart__jpx_edinet__daily_valuation_indicators_deduplicated` | `(jpx_code, file_date)`の一意性 |
 | `assert_mart__jpx_edinet__daily_valuation_indicators_per_matches_disclosed`（warn、相対誤差2%） | 企業自己申告PER（決算期末日終値基準）との整合性。結合キー・調整係数ロジックの健全性チェック |
 | `assert_mart__edinet__financial_indicators_*`（詳細は`docs/mart_validation.md`） | eps/bpsの逆算検証、salesのYTD単調性、`total_assets >= net_assets`等 |
+| `not_null` on `mart__edinet__reit_financial_indicators`/`mart__edinet__etf_financial_indicators`の`doc_id`/`edinet_code`/`period_end`（ETFは`fund_code`も） | grainキー列の健全性 |
 
 ## 今後の拡張候補（未実装）
 

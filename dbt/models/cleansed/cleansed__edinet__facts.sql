@@ -65,9 +65,22 @@ with new_file_dates as (
     -- ディレクトリ名(file_date=YYYY-MM-DD)をglob()で列挙する(実測: 0.13秒、約65倍高速。
     -- 2026-09-17実機ベンチマークで判明)。ファイル内容を一切開かないため、landingが
     -- 何日分に増えても実質定数時間で終わる。
+    --
+    -- max_file_date var(既定none、本番運用では未指定=フィルタなし):
+    -- `--full-refresh`時やテーブル未作成の初回実行はis_incremental()がfalseになり、
+    -- 上のexceptが丸ごとスキップされ全履歴(2026-10-17実機: 69,092,223行)を一度に
+    -- 処理することになる。DuckDBのmemory_limit(12GB)を超えてディスクスピル
+    -- (実測63GB)が発生し数時間かかる・OOMリスクもある(2026-10-12のREIT backfill時
+    -- にも同種のOOMが実際に発生した実績あり)。disaster recovery等でゼロから
+    -- 再構築する場合は、このvarで日付上限を区切りながら`--full-refresh`→通常
+    -- incrementalを繰り返すことで、1回あたりの処理行数を一定以下(目安500万行)に
+    -- 抑えられる(2026-10-18導入)。
     select distinct
         regexp_extract(file, 'file_date=([0-9]{4}-[0-9]{2}-[0-9]{2})', 1)::date as file_date
     from glob('{{ env_var("LANDING_ROOT", "/data/landing") }}/edinet_csv_facts/file_date=*/part.parquet')
+    {% if var("max_file_date", none) %}
+    where regexp_extract(file, 'file_date=([0-9]{4}-[0-9]{2}-[0-9]{2})', 1)::date <= '{{ var("max_file_date") }}'::date
+    {% endif %}
     {% if is_incremental() %}
     except
     select distinct file_date from {{ this }}

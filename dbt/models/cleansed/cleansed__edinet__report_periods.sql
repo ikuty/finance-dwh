@@ -6,8 +6,8 @@
 -- 粒度は cleansed__edinet__documents と同じ(1行=1書類)。cleansed__edinet__facts
 -- （1行=1書類内の1項目）の集計はしない。
 --
--- filer_category(company/fund/reit/infra_fund)の分離(2026-09-19決定、2026-10-12に
--- reit追加、2026-10-13にinfra_fund追加):
+-- filer_category(company/fund/reit/infra_fund/etf)の分離(2026-09-19決定、2026-10-12に
+-- reit追加、2026-10-13にinfra_fund追加、2026-10-17にetf追加):
 --   EDINET提出者には、通常の事業会社に加えて投資信託受益証券等のファンド型が
 --   混在する(実機確認: ordinance_code='030'、全体の0.04%程度)。JPX側の
 --   security_category_ja分離と同じ考え方で、ordinance_code='030'をfundとして
@@ -24,6 +24,16 @@
 --   edinet_infra_fund_issuers参照)、決算短信iXBRLが存在しないためREITと財務指標の
 --   意味が異なるので、seedの確認済みリストでREIT判定より先に除外し'infra_fund'
 --   として独立させる。
+--   ETF(上場投資信託)はform_codeが他の国内投資信託(ETF以外)と完全に共有されて
+--   おり(実機確認: 07A000/04A000/10A000等)form_code自体では一切判別できない
+--   (2026-10-17、edinet-dl側のPhase 0調査で発見、詳細はedinet-dl側の
+--   services/edinet-dl/docs/etf_fund_support_design.md参照)。sec_code・DEIタグ
+--   も使えない(主要運用会社では常に空、REITと同じ問題だが補完手段が無い)ため、
+--   edinet_etf_fund_issuers seedの(edinet_code, fund_code)複合キーで判定する。
+--   1口当たり指標(基準価額・分配金)はTDnet/JPX上場会社情報サービス経由で取得
+--   可能だがiXBRLではなくPDFのみ(REITと異なる)、かつ市場価格が基準価額と
+--   ほぼ一致する(ETFの設計上の性質)ため、今回は絶対額指標のみを対象とし、
+--   1口当たり指標の取得は見送る(2026-10-17決定)。
 --
 -- regime(旧制度/移行期/新制度)の判定方式(2026-09-19決定、重要):
 --   2024年度から、四半期報告書(第1・第3四半期)の提出義務が廃止され、半期報告書に
@@ -93,6 +103,10 @@ infra_funds as (
     select edinet_code from {{ ref('edinet_infra_fund_issuers') }}
 ),
 
+etf_funds as (
+    select edinet_code, fund_code from {{ ref('edinet_etf_fund_issuers') }}
+),
+
 base as (
     select
         d.doc_id,
@@ -100,6 +114,7 @@ base as (
         d.sec_code,
         d.filer_name,
         case
+            when etf.edinet_code is not null then 'etf'
             when inf.edinet_code is not null then 'infra_fund'
             when d.form_code like '07B%' or d.form_code like '10B%' then 'reit'
             when d.ordinance_code = '030' then 'fund'
@@ -120,10 +135,13 @@ base as (
         coalesce(d.period_end, p.period_end) as period_end,
         d.submit_date_time,
         d.doc_type_code,
-        d.form_code
+        d.form_code,
+        d.fund_code
     from raw_docs d
     left join raw_docs p on p.doc_id = d.parent_doc_id
     left join infra_funds inf on inf.edinet_code = d.edinet_code
+    left join etf_funds etf
+        on etf.edinet_code = d.edinet_code and etf.fund_code = d.fund_code
 ),
 
 regime_flags as (
@@ -159,7 +177,8 @@ select
     end as regime,
     b.submit_date_time,
     b.doc_type_code,
-    b.form_code
+    b.form_code,
+    b.fund_code
 from base b
 left join regime_flags rf
     on rf.edinet_code = b.edinet_code and rf.fiscal_year = b.fiscal_year
