@@ -151,6 +151,64 @@ models:
       - name: treasury_investment_units
         description: "自己投資口数(tse-re-t:NumberOfTreasuryInvestmentUnitsIssuedAtEndOfPeriodREIT)。"
 
+  - name: mart__edinet__etf_financial_indicators
+    description: >
+      銘柄(edinet_code×fund_code)×期(period_end)ごとのETF(上場投資信託)主要財務
+      指標（案B、毎回フル rebuild、Parquet）。mart__edinet__financial_indicators
+      （事業会社向け）・mart__edinet__reit_financial_indicators（REIT向け）とは
+      完全に独立したモデル。grainはedinet_code×fund_code×period_end（REITと異なり
+      fund_codeが必須、同一edinet_codeで複数ファンドを運用する運用会社が存在する
+      ため。詳細はモデルSQL冒頭コメント参照）。
+    columns:
+      - name: doc_id
+        description: >
+          参照用の代表書類ID（同一期に複数提出があれば submit_date_time 最新の1件）。
+          各指標列は列ごとに最新の非NULL値を採用するため、必ずしもこの書類1件だけに
+          由来するとは限らない（他martと同じ方式）。
+        data_tests: [not_null]
+      - name: edinet_code
+        description: "EDINETコード。"
+        data_tests: [not_null]
+      - name: fund_code
+        description: "ファンドコード。同一edinet_codeで複数ETFを運用する運用会社が存在するため、edinet_codeだけでは一意にならない。"
+        data_tests: [not_null]
+      - name: period_end
+        description: "対象期間の終了日。"
+        data_tests: [not_null]
+      - name: sec_code
+        description: >
+          証券コード。edinet_etf_fund_issuers seedで既に補完済みのcleansed__edinet__
+          report_periods.sec_codeをそのまま使う（REITと異なりDEI補完は不要、Phase 1
+          (2026-10-17)で対応済み）。
+      - name: filer_name
+        description: "提出者名（運用会社名、例: ブラックロック・ジャパン株式会社）。ファンド名そのものではない点に注意。"
+      - name: fund_name
+        description: "ファンド名（例: ｉシェアーズ・コア　Ｊリート　ＥＴＦ）。edinet_etf_fund_issuers seed由来。"
+      - name: period_type
+        description: "'annual'(有報/訂正有報)/'half'(半期報告書/訂正)。ETFは四半期報告書が無い。"
+      - name: period_start
+        description: "対象期間の開始日。"
+      - name: submit_date_time
+        description: "書類の提出日時（開示日）。"
+      - name: total_assets
+        description: "資産(jppfs_cor:Assets)。"
+      - name: liabilities
+        description: "負債(jppfs_cor:Liabilities)。"
+      - name: net_assets
+        description: "純資産(jppfs_cor:NetAssets)。"
+      - name: operating_income
+        description: "営業利益又は営業損失(jppfs_cor:OperatingIncome)。"
+      - name: ordinary_income
+        description: "経常利益又は経常損失(jppfs_cor:OrdinaryIncome)。"
+      - name: net_income
+        description: "当期純利益又は当期純損失(jppfs_cor:ProfitLoss)。税引前当期純利益に相当するタグはETFの開示に存在しない。"
+      - name: principal
+        description: "元本、投資信託(jppfs_cor:PrincipalFND)。投資信託特有の会計項目、REITには無い。"
+      - name: surplus_deficit
+        description: "剰余金又は欠損金（△）、投資信託(jppfs_cor:SurplusDeficitFND)。"
+      - name: reserve_for_distribution
+        description: "分配準備積立金、投資信託(jppfs_cor:ReserveForDistributionFND)。"
+
   - name: mart__jpx_edinet__disclosed_fundamentals
     description: >
       銘柄(jpx_code)×開示(doc_id)ごとの財務指標（毎回フル rebuild、Parquet）。
