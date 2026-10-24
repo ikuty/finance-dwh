@@ -290,7 +290,10 @@ models:
       - name: security_category_ja
         description: >
           ファンド型銘柄の証券タイプ区分（内国投資信託受益証券・内国投資証券・
-          外国投資証券・出資証券のいずれか）。普通株式の行ではNULL。
+          外国投資証券・出資証券のいずれか、PDFの生表記）。普通株式の行ではNULL。
+          TOKYO PRO Market上場のETN/ETF等（PDF上は業種欄が通常の事業分類のまま誤表記
+          されている、seed: jpx_tpm_fund_codesで判定）は'ETN/ETF（TOKYO PRO Market）'
+          （本モデルでの判定結果、PDFの生表記ではない）。
 
   - name: cleansed__jpx__daily_ohlc
     description: >
