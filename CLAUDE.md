@@ -186,6 +186,15 @@ GitHub上のdefault branchは`main`のまま変更していない。PRのbaseは
   `feature/etf-cleansed-layer`ブランチにpush済み、`dev`への昇格は未実施。
 - **`cleansed__edinet__facts`のfull-refresh時メモリ問題への対処**（2026-10-18）:
   上記参照、「既知の制約」（`README.md`）参照。
+- **jquants-dlのcleansed層を追加**（2026-10-25）: `cleansed__jquants__daily_quotes`・
+  `cleansed__jquants__listed_master`（finance-lake側jquants-dlが取得するJ-Quants
+  APIの生JSONを型付け）。既存の`cleansed__jpx__stq_prices`（東証日報PDF由来）とは
+  完全に独立したテーブルとして持つ。突合調査で発見したTOKYO PRO Market上場ETN/ETF
+  39件の業種分類ギャップ（`cleansed__jpx__stq_prices`側）も同時に修正した
+  （`jpx_tpm_fund_codes`seed追加）。
+- **dbt-docs-genサービスを追加**（2026-10-25）: `dbt docs generate`で生成した静的
+  ファイルをS3（`finance-dwh/docs/`、既存のikuty-financeバケット共用）へアップロード
+  し静的ホスティングする。サービスチェーンの最後（transform完了後）に実行。
 
 ## 依存
 
@@ -204,7 +213,8 @@ lxml等のC拡張依存は増やさず`html.parser`バックエンドのみ使�
 - compose + `.env`: `/home/ikuty/finance-dwh/compose/`
 - DuckDB カタログ・landing・cleansed の Parquet: `/home/ikuty/finance-dwh/data/`
   （HDD 側。`DATA_DIR` としてコンテナに `/data` で bind mount）
-- systemd unit: `/etc/systemd/system/finance-dwh-{transform.service,transform.timer}`
+- systemd unit: `/etc/systemd/system/finance-dwh-{transform.service,transform.timer}`・
+  `dbt-docs-gen.{service,timer}`（2026-10-25追加）
   （常駐サービスは無い。旧 `finance-dwh-postgres.service` は廃止）
 - systemd テンプレートは `<user>` プレースホルダを持たず `/home/ikuty/...` で確定済み
   （finance-lake で `<user>` 未置換により 2 日ジョブが止まった事故を踏まえた判断）。
@@ -212,12 +222,15 @@ lxml等のC拡張依存は増やさず`html.parser`バックエンドのみ使�
 ## 実行順序（通電枠 04:00-06:00 JST）
 
 jpx 04:01:00 → edinet 04:01:30 → mufg-corporate-actions 04:01:40（週次・月曜のみ）
-→ **transform 04:01:45** → shutdown 04:02:00。
-`finance-dwh-transform.service` は `After=` で lake 両ジョブの完了を待ち、共有シャット
-ダウンは `After=` で transform 完了を待つ。`finance-lake/systemd/
-finance-lake-shutdown.service` の `After=` には `finance-dwh-transform.service` が
-既に追記済み（`finance-dwh-postgres.service` への参照はそもそも含まれていないため、
-今回の Postgres 撤去にあたって finance-lake 側の変更は不要だった）。
+→ ir-disclosure-dl 04:01:42 → jquants-dl 04:01:43（finance-lake側）→
+**transform 04:01:45** → **dbt-docs-gen 04:01:48**（2026-10-25追加、サービス
+チェーンの最後）→ shutdown 04:02:00。
+`finance-dwh-transform.service` は `After=` で lake 各ジョブの完了を待ち、
+`dbt-docs-gen.service` は `After=finance-dwh-transform.service`（dbt docs generate
+は本体のdbt build完了後のカタログ情報が必要なため）、共有シャットダウンは `After=`
+でその両方の完了を待つ。`finance-lake/systemd/finance-lake-shutdown.service` の
+`After=` には `finance-dwh-transform.service`・`dbt-docs-gen.service` が既に
+追記済み。
 
 ## 現状（2026-10-18 時点）
 
