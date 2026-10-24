@@ -191,6 +191,69 @@ models:
       - name: forecast_eps
         description: "会社予想1株当たり当期純利益。"
 
+  - name: cleansed__jquants__daily_quotes
+    description: >
+      J-Quants API (GET /v2/equities/bars/daily、jquants-dlが取得) の生レスポンスの
+      型付け版（毎回フル rebuild、Parquet）。cleansed__jpx__stq_prices（東証日報PDF
+      由来）とは完全に独立したテーブル（2026-10-24決定、どちらを正とするかはmart層
+      以降で決める）。codeは5桁（末尾1桁は株式種別、普通株は0）で、
+      cleansed__jpx__stq_pricesのcode（4桁）とは桁数が異なる（正規化していない）。
+    columns:
+      - name: file_date
+        description: "取引日。"
+        data_tests: [not_null]
+      - name: code
+        description: "銘柄コード（5桁、末尾1桁は株式種別）。"
+        data_tests: [not_null]
+      - name: open_price / high_price / low_price / close_price
+        description: "始値・高値・安値・終値。"
+      - name: upper_limit_flag_raw / lower_limit_flag_raw
+        description: "値幅制限（ストップ高・ストップ安）関連のフラグと思われるが、意味は未確定。解釈せず生の値のまま保持する。"
+      - name: volume
+        description: "出来高。"
+      - name: trading_value
+        description: "売買高（売買代金）。"
+      - name: adj_factor
+        description: "株式分割等の調整係数。"
+      - name: adj_open_price / adj_high_price / adj_low_price / adj_close_price
+        description: "株式分割等調整後の始値・高値・安値・終値。"
+      - name: adj_volume
+        description: "株式分割等調整後の出来高。"
+      - name: market_cap
+        description: "時価総額。"
+      - name: ex_rights_flag_raw
+        description: "権利関連の値と思われるが、意味は未確定。解釈せず生の値のまま保持する。"
+
+  - name: cleansed__jquants__listed_master
+    description: >
+      J-Quants API (GET /v2/equities/master、jquants-dlが取得) の生レスポンスの
+      型付け版（毎回フル rebuild、Parquet）。cleansed__jpx__stq_prices（東証日報PDF
+      由来）とは市場区分・33業種コードの分類方針が一部異なる（ファンド型銘柄の扱い等、
+      実データで確認済み。詳細は[[jquants-price-vs-jpx-report-diff]]メモリ参照）。
+      codeは5桁（末尾1桁は株式種別、普通株は0）で、cleansed__jpx__stq_pricesのcode
+      （4桁）とは桁数が異なる（正規化していない）。
+    columns:
+      - name: file_date
+        description: "基準日。"
+        data_tests: [not_null]
+      - name: code
+        description: "銘柄コード（5桁、末尾1桁は株式種別）。"
+        data_tests: [not_null]
+      - name: company_name_ja / company_name_en
+        description: "会社名（日本語・英語）。"
+      - name: industry_code_17 / industry_name_17
+        description: "17業種コード・名称。"
+      - name: industry_code_33 / industry_name_33
+        description: "33業種コード・名称。"
+      - name: scale_category
+        description: "規模区分（例: TOPIX Small 1）。"
+      - name: market_code / market_name
+        description: "市場区分コード・名称。"
+      - name: margin_code / margin_name
+        description: "貸借区分コード・名称。"
+      - name: product_category
+        description: "商品区分コード。"
+
   - name: cleansed__jpx__stq_prices
     description: >
       JPX 形式C（株式相場表・詳細日次）セクション1（立会市場普通取引）の
