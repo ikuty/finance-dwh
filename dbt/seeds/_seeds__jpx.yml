@@ -46,3 +46,24 @@ seeds:
       - name: market_segment_code
         description: "市場区分コード（先頭ゼロを含むため文字列、例: '0111'）。"
         data_tests: [not_null, unique]
+
+  - name: jpx_tpm_fund_codes
+    description: >
+      TOKYO PRO Market上場のETN/ETF等、ファンド型銘柄のコード一覧
+      （2026-10-25追加）。これらは東証日報PDF上で業種欄が「サービス業」等の通常の
+      事業分類のまま印字されており（実機確認）、cleansed__jpx__stq_pricesの
+      ファンド型判定ロジック（raw_industry_sector_jaが内国投資信託受益証券等の
+      4特殊ラベルのいずれかという条件）だけでは捕捉できない。jQuantsの銘柄マスタ
+      （業種コード9999=その他）との突合で発見した（詳細は
+      [[jquants-price-vs-jpx-report-diff]]メモリ参照）。日報のPDF自体に業種を
+      判別する手がかりが無いため、コード一覧をこのseedとして静的に持つ
+      （market_segment_code等の既存seedと同じ解決パターン）。
+    config:
+      column_types:
+        code: varchar
+    columns:
+      - name: code
+        description: "銘柄コード（4桁、英字混在の新コード体系含む）。"
+        data_tests: [not_null, unique]
+      - name: name_ja
+        description: "銘柄名（日本語、PDF表記そのまま。参考情報、結合キーには使わない）。"
