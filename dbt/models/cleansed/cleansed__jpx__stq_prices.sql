@@ -20,6 +20,20 @@
 --     value_text/value_numと同じ「生データ＋型付け済み値を両方保持する」パターン)。
 --   - ファンド型4種のindustry_code_33/17は「9999/99(その他)」に寄せず、明示的に
 --     NULLとする(「その他業種に分類される」という誤解を避けるため)。
+--
+-- TOKYO PRO Market上場のETN/ETF等の業種誤表記への対応(2026-10-25追加):
+--   TOKYO PRO Market上場のETN/ETF等(SPDRゴールド等)は、raw_industry_sector_jaが
+--   上記4特殊ラベルのいずれにも当たらず「サービス業」等の通常の事業分類のまま
+--   PDFに印字されている(実機確認。PDF自体に業種を正しく判別する手がかりが無い)。
+--   jQuantsの銘柄マスタ(業種コード9999=その他)との突合で発見した(詳細は
+--   jquants-price-vs-jpx-report-diffメモリ参照)。該当コードをseed
+--   (jpx_tpm_fund_codes)として静的に持ち、ファンド型4特殊ラベルと同様に
+--   industry_code_33/17をNULLにする。security_category_jaはPDFの生表記
+--   (「サービス業」)を使わず、固定の説明的な値('ETN/ETF（TOKYO PRO Market）')
+--   を設定する(生データではなく本モデルでの判定結果であることを明示するため)。
+--   market_segment_codeはこのロジックの対象外(既存の「掲載ページの見出しに忠実」
+--   という方針通り、TOKYOPROMarket銘柄=0105のまま変更しない。jQuants側の市場区分
+--   0109との差異は分類方針の違いであり、修正対象ではない)。
 
 {{ config(
     materialized='external',
@@ -61,20 +75,24 @@ typed as (
             when raw_industry_sector_ja in
                 ('内国投資信託受益証券', '内国投資証券', '外国投資証券', '出資証券')
             then raw_industry_sector_ja
+            when tpm.code is not null then 'ETN/ETF（TOKYO PRO Market）'
         end as security_category_ja,
         case
             when raw_industry_sector_ja in
                 ('内国投資信託受益証券', '内国投資証券', '外国投資証券', '出資証券')
             then null
+            when tpm.code is not null then null
             else raw_industry_sector_ja
         end as industry_sector_ja,
         case
             when raw_industry_sector_ja in
                 ('内国投資信託受益証券', '内国投資証券', '外国投資証券', '出資証券')
             then null
+            when tpm.code is not null then null
             else raw_industry_sector_en
         end as industry_sector_en
     from base b
+    left join {{ ref('jpx_tpm_fund_codes') }} tpm on tpm.code = b.code
 )
 
 select
