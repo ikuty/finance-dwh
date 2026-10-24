@@ -1,0 +1,21 @@
+# Mac Miniホスト（Ubuntu 24.04 LTS）に配置する systemd ユニットの例。
+# /etc/systemd/system/dbt-docs-gen.timer にコピーする（dbt-docs-gen.service と対で使う）。
+#
+# finance-dwh-transform.timer（04:01:45）より後、finance-lake-shutdown.timer
+# （04:02:00、finance-lake側リポジトリ）より前の04:01:48に置く。dbt docs generate
+# は本体のdbt build完了後のカタログ情報が必要なため、finance-dwh-transformより前に
+# 発火してはならない。タイマー順序だけでなく、dbt-docs-gen.serviceのAfter=でも
+# finance-dwh-transform.serviceの完了を待つ（詳細はdbt-docs-gen.service参照）。
+#
+# マシンのシステムタイムゾーンはUTC（Etc/UTC）だが、Tapoの電源投入時刻はJSTで管理して
+# いるため、OnCalendarにも明示的にAsia/Tokyoを指定する。
+
+[Unit]
+Description=Run dbt-docs-gen (dbt docs generate + S3 upload)
+
+[Timer]
+OnCalendar=*-*-* 04:01:48 Asia/Tokyo
+Persistent=true
+
+[Install]
+WantedBy=timers.target

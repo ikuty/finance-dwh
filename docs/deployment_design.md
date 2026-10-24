@@ -16,7 +16,7 @@ Postgres 版（2026-09-10〜11）で完了済み。本ドキュメントは Duck
 | compose | `/home/ikuty/finance-dwh/compose/docker-compose.yml`（+ 同ディレクトリの `.env`） |
 | DuckDB カタログ・landing・cleansed の Parquet | `/home/ikuty/finance-dwh/data/`（HDD 側 `/home` 配下） |
 | レイク（read-only mount 元） | `/home/ikuty/finance-lake/data` → コンテナ内 `/lake:ro` |
-| systemd unit | `/etc/systemd/system/finance-dwh-{transform.service,transform.timer}`（常駐サービスは無い） |
+| systemd unit | `/etc/systemd/system/finance-dwh-{transform.service,transform.timer}`・`dbt-docs-gen.{service,timer}`（常駐サービスは無い） |
 
 ## `compose/.env`（deploy 時に手で用意、git 管理外）
 
@@ -37,7 +37,10 @@ Postgres 版にあった `PGDATA_DIR` / `POSTGRES_USER` / `POSTGRES_PASSWORD` /
 
 - S3 バケット（`ikuty-finance`、静的サイトホスティング、7 日ライフサイクル）と IAM ユーザーは
   `finance-lake` で作成済みのものを共用。レポートのキーは `finance-dwh/run_report.html`
-  （lake は `edinet-dl/…` / `jpx-daily-pdf-dl/…`。キーで名前空間分離）。
+  （lake は `edinet-dl/…` / `jpx-daily-pdf-dl/…`。キーで名前空間分離）。dbt docs
+  （`dbt-docs-gen`、2026-10-25追加）は `finance-dwh/docs/` 配下に `index.html`・
+  `manifest.json`・`catalog.json`等を並べる。7日ライフサイクルだが毎日再アップロード
+  で上書きされるため（`run_report.html`と同じ理由）実質失効しない。
 - `S3_BUCKET_NAME` / `SLACK_WEBHOOK_URL` 未設定なら該当ステップは静かにスキップされる。
 
 ## GitHub Actions
@@ -72,16 +75,35 @@ Postgres 版にあった「postgres サービスの即時反映」の考慮は�
   `After=` に docker / edinet-dl / jpx-daily-pdf-dl を列挙（順序制約のみ、`Requires=`
   無し）。旧 `finance-dwh-postgres.service` は廃止（DuckDB は組み込み型で常駐不要）。
 - `finance-dwh-transform.timer`: `OnCalendar=*-*-* 04:01:45 Asia/Tokyo`、`Persistent=true`。
+- `dbt-docs-gen.service`（2026-10-25追加）: `Type=oneshot`。
+  `docker compose run --rm dbt-docs-gen`（`transform`と同一イメージ、entrypointのみ
+  `python -m flows.dbt_docs_gen`に上書き）。`After=finance-dwh-transform.service`
+  （dbt docs generateは本体のdbt build完了後のカタログ情報が必要なため、サービス
+  チェーンの最後に置く）。
+- `dbt-docs-gen.timer`: `OnCalendar=*-*-* 04:01:48 Asia/Tokyo`、`Persistent=true`。
 
-タイミング: **jpx 04:01:00 → edinet 04:01:30 → transform 04:01:45 → shutdown 04:02:00**。
+タイミング: **jpx 04:01:00 → edinet 04:01:30 → (mufg 04:01:40、月のみ) →
+ir-disclosure-dl 04:01:42 → jquants-dl 04:01:43 → transform 04:01:45 →
+dbt-docs-gen 04:01:48 → shutdown 04:02:00**（finance-lake側リポジトリも参照）。
 transform のタイマーを lake の両タイマーより後にするのは、遅延起動時に取得ジョブより先に
 発火して `After=` が空振りするのを避けるため。shutdown のタイマーより前にするのは、
 shutdown 側の `After=` がこのサービスを「実行中」と認識できるようにするため。
 
 `finance-lake/systemd/finance-lake-shutdown.service` の `After=` には
-`finance-dwh-transform.service` が既に追記済み（`finance-dwh-postgres.service` への
-参照はそもそも含まれていなかったため、今回の Postgres 撤去にあたって finance-lake
-側の変更は不要）。
+`finance-dwh-transform.service`・`dbt-docs-gen.service`が既に追記済み
+（`finance-dwh-postgres.service` への参照はそもそも含まれていなかったため、今回の
+Postgres 撤去にあたって finance-lake 側の変更は不要）。
+
+### dbt-docs-genとTapoの固定電源枠に関する注意
+
+後述の「落とし穴」節で記録した実機障害（長時間ジョブがTapoの固定2時間枠終端で
+強制停止される問題）と同じ構造のリスクが、dbt-docs-genをtransformの後に置くことで
+再度生じる。実機確認（2026-10-25）ではdbt docs generate+S3アップロードは約12秒と
+短く、通常は問題にならないが、`finance-dwh-transform`自体が長時間化する日（フル
+リビルド等）には、dbt-docs-genが一度も実行されずに電源枠が尽きる可能性は残る。
+影響はドキュメントが古いまま残るだけ（cleansed層やSlack通知には影響しない）で、
+過去の実機障害（dbt_build自体が飛ぶ）より深刻度は低いため、現時点では追加の対策
+（タスク順序の分割等）は行わない。
 
 ### 落とし穴: `After=` による「待つ」はTapoの物理電源遮断には勝てない（2026-09-13実機障害）
 
