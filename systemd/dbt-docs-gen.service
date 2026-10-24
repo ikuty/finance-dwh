@@ -1,0 +1,30 @@
+# Mac Miniホスト（Ubuntu 24.04 LTS）に配置する systemd ユニットの例。
+# /etc/systemd/system/dbt-docs-gen.service にコピーする（dbt-docs-gen.timer と対で使う）。
+#
+# サービスチェーンの最後（finance-dwh-transform完了後）に実行する想定
+# （2026-10-25追加）。dbt docs generateは本体のdbt build完了後のカタログ情報が
+# 必要なため、After=finance-dwh-transform.serviceにより、finance-dwh-transformが
+# 実行中であればその完了を自動的に待つ（純粋な順序制約、Requires=/Wants=は
+# 付けない。finance-lake-shutdown.serviceが各取得サービスの完了を待つのと同じ
+# 仕組み）。
+#
+# マシンのシャットダウンはこのユニットでは行わない。finance-lake の共有シャットダウン
+# ユニット（finance-lake/systemd/finance-lake-shutdown.service）が全ジョブ完了後に
+# 一手に引き受ける。そのユニットの After= 行にも dbt-docs-gen.service を追加すること
+# （本サービス実行中ならシャットダウン開始を自動的に待つ）。
+#
+# 有効化:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable dbt-docs-gen.timer
+#   sudo systemctl start dbt-docs-gen.timer
+#   journalctl -u dbt-docs-gen.service
+
+[Unit]
+Description=dbt docs generate + S3 upload (finance-dwh)
+After=network-online.target docker.service finance-dwh-transform.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ikuty/finance-dwh/compose
+ExecStart=/usr/bin/docker compose run --rm dbt-docs-gen
