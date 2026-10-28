@@ -19,7 +19,10 @@ with raw as (
     from read_json_auto('{{ env_var("LAKE_ROOT", "/lake") }}/jquants-dl/raw/*/*/*/listed_master.json')
 )
 
-select
+-- distinct: J-Quants側のDateは「直近営業日時点」を指し、取得日ではない。週末・祝日を
+-- 挟んで連続取得すると、同一Date（同一スナップショット）の完全重複レコードが複数の
+-- 生ファイル（取得日ごと）にまたがって存在するため（2026-10-26実例で確認済み）。
+select distinct
     try_cast(rec.Date as date) as file_date,
     rec.Code::varchar         as code,
     rec.CoName::varchar       as company_name_ja,
