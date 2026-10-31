@@ -1,0 +1,36 @@
+# Mac Miniホスト（Ubuntu 24.04 LTS）に配置する systemd ユニットの例。
+# /etc/systemd/system/finance-dwh-mart-transfer.service にコピーする
+# （finance-dwh-mart-transfer.timer と対で使う）。
+#
+# dbt build 完了後、mart の Parquet を ikuty.com（VPS）へ転送し、VPS 側の current を
+# 切り替える（2026-10-31追加）。VPS 上の MCP サーバ（finance-poc/mcp-mart）が参照する。
+# 詳細は flows/mart_transfer.py と docs/mart_transfer_design.md。
+#
+# After=finance-dwh-transform.service は純粋な順序制約（実行中なら待つ。Requires=/Wants=
+# は付けない）。transform が失敗した日に壊れた mart を送らないための保護は、unit では
+# なく flows/mart_transfer.py が MART_ROOT/_BUILD_RESULT.json を見て行う。
+#
+# TimeoutStartSec: Tapo の固定電源枠を使い切って mart 転送が長引くと、後続の
+# dbt-docs-gen と共有シャットダウンまで巻き込む（docs/deployment_design.md「落とし穴」節
+# 参照）。回線が詰まった日に延々と待たないよう、10分で打ち切る。
+#
+# マシンのシャットダウンはこのユニットでは行わない。finance-lake の共有シャットダウン
+# ユニットの After= 行に finance-dwh-mart-transfer.service を追記すること（finance-lake
+# 側の変更、本リポジトリの範囲外）。
+#
+# 有効化:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable finance-dwh-mart-transfer.timer
+#   sudo systemctl start finance-dwh-mart-transfer.timer
+#   journalctl -u finance-dwh-mart-transfer.service
+
+[Unit]
+Description=finance-dwh mart transfer to ikuty.com (rsync + activate)
+After=network-online.target docker.service finance-dwh-transform.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ikuty/finance-dwh/compose
+ExecStart=/usr/bin/docker compose run --rm mart-transfer
+TimeoutStartSec=600

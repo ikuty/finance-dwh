@@ -81,16 +81,23 @@ Postgres 版にあった「postgres サービスの即時反映」の考慮は�
   （dbt docs generateは本体のdbt build完了後のカタログ情報が必要なため、サービス
   チェーンの最後に置く）。
 - `dbt-docs-gen.timer`: `OnCalendar=*-*-* 04:01:48 Asia/Tokyo`、`Persistent=true`。
+- `finance-dwh-mart-transfer.service`（2026-10-31追加）: `Type=oneshot`。
+  `docker compose run --rm mart-transfer`。mart の Parquet を ikuty.com（VPS）へ
+  転送する。`After=finance-dwh-transform.service`、`TimeoutStartSec=600`。
+  `dbt-docs-gen.service` の `After=` にも追加（mart 配信を docs より優先）。
+  詳細は `docs/mart_transfer_design.md`。
+- `finance-dwh-mart-transfer.timer`: `OnCalendar=*-*-* 04:01:46 Asia/Tokyo`、`Persistent=true`。
 
 タイミング: **jpx 04:01:00 → edinet 04:01:30 → (mufg 04:01:40、月のみ) →
 ir-disclosure-dl 04:01:42 → jquants-dl 04:01:43 → transform 04:01:45 →
-dbt-docs-gen 04:01:48 → shutdown 04:02:00**（finance-lake側リポジトリも参照）。
+mart-transfer 04:01:46 → dbt-docs-gen 04:01:48 → shutdown 04:02:00**（finance-lake側リポジトリも参照）。
 transform のタイマーを lake の両タイマーより後にするのは、遅延起動時に取得ジョブより先に
 発火して `After=` が空振りするのを避けるため。shutdown のタイマーより前にするのは、
 shutdown 側の `After=` がこのサービスを「実行中」と認識できるようにするため。
 
 `finance-lake/systemd/finance-lake-shutdown.service` の `After=` には
 `finance-dwh-transform.service`・`dbt-docs-gen.service`が既に追記済み
+（`finance-dwh-mart-transfer.service` は2026-10-31時点で未追記、finance-lake側での追記が必要）
 （`finance-dwh-postgres.service` への参照はそもそも含まれていなかったため、今回の
 Postgres 撤去にあたって finance-lake 側の変更は不要）。
 
