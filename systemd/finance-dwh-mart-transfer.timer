@@ -1,0 +1,21 @@
+# Mac Miniホスト（Ubuntu 24.04 LTS）に配置する systemd ユニットの例。
+# /etc/systemd/system/finance-dwh-mart-transfer.timer にコピーする
+# （finance-dwh-mart-transfer.service と対で使う）。
+#
+# finance-dwh-transform.timer（04:01:45）より後、dbt-docs-gen.timer（04:01:48）より前の
+# 04:01:46 に置く。mart の配信は dbt docs より重要で、docs-gen が長引いても転送が
+# 巻き込まれないよう、転送を先に走らせる（dbt-docs-gen.service の After= にも本サービスを
+# 追加済み）。共有シャットダウンのタイマー（04:02:00）より前であることも必須。
+#
+# マシンのシステムタイムゾーンは UTC だが、Tapo の電源投入時刻は JST 管理なので
+# OnCalendar にも明示的に Asia/Tokyo を指定する。
+
+[Unit]
+Description=Run finance-dwh mart transfer
+
+[Timer]
+OnCalendar=*-*-* 04:01:46 Asia/Tokyo
+Persistent=true
+
+[Install]
+WantedBy=timers.target

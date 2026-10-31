@@ -22,3 +22,6 @@ __pycache__/
 .ruff_cache/
 
 .DS_Store
+
+# mart転送用のSSH鍵・known_hosts（秘密鍵を含む）
+.ssh-mart-transfer/
