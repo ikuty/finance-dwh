@@ -6,6 +6,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# mart-transfer(flows/mart_transfer.py)がVPSへ転送するために使う(2026-10-31追加)。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client rsync \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY transform/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

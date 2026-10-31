@@ -8,6 +8,9 @@
 # 付けない。finance-lake-shutdown.serviceが各取得サービスの完了を待つのと同じ
 # 仕組み）。
 #
+# 2026-10-31: mart転送(finance-dwh-mart-transfer)をdbt docsより先に走らせるため、
+# After=にfinance-dwh-mart-transfer.serviceを追加した（mart配信の方がdocsより重要）。
+#
 # マシンのシャットダウンはこのユニットでは行わない。finance-lake の共有シャットダウン
 # ユニット（finance-lake/systemd/finance-lake-shutdown.service）が全ジョブ完了後に
 # 一手に引き受ける。そのユニットの After= 行にも dbt-docs-gen.service を追加すること
@@ -21,7 +24,7 @@
 
 [Unit]
 Description=dbt docs generate + S3 upload (finance-dwh)
-After=network-online.target docker.service finance-dwh-transform.service
+After=network-online.target docker.service finance-dwh-transform.service finance-dwh-mart-transfer.service
 Wants=network-online.target
 
 [Service]
