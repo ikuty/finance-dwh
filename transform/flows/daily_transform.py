@@ -61,6 +61,7 @@ from flows.load_ir_disclosure_reit import (
 from flows.load_jpx_monthly_ohlc import load_jpx_monthly_ohlc_facts
 from flows.load_jpx_stq import load_jpx_stq_prices_backlog, load_jpx_stq_prices_recent
 from flows.load_mufg_corporate_actions import load_mufg_corporate_actions
+from flows.mart_transfer import write_build_marker
 from flows.notify import send_slack_notification, upload_report_to_s3
 from flows.test_violations import find_notify_worthy_violations, format_violation_message
 from report.run_report import DbtOutcome, generate_report
@@ -273,6 +274,8 @@ def daily_transform() -> str:
     )
 
     result = dbt_build()
+    # mart 転送サービス(finance-dwh-mart-transfer)が、失敗した日のmartをVPSへ送らないための印
+    write_build_marker(result.ok)
 
     html, summary = build_report(result)
     summary = publish_and_notify(html, summary)

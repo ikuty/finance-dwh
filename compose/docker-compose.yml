@@ -9,6 +9,10 @@
 #                  サービスチェーンの最後（finance-dwh-transform完了後）に実行する
 #                  想定。カタログ情報の生成にはtransformで既にビルド済みのDBが
 #                  必要なため、transformより前に実行してはならない）。
+#   mart-transfer : dbt build後、martのParquetをikuty.com(VPS)へ転送する使い捨てコンテナ
+#                  （2026-10-31追加。transformと同一イメージだが、martは読み取り専用で
+#                  マウントし、レイク・dbt等は不要なため独自のvolumes/environmentを持つ。
+#                  サービスチェーンはtransform → mart-transfer → dbt-docs-gen）。
 #
 # 設定は同ディレクトリの .env（.env.example 参照）から。少なくとも LAKE_DIR を指定すること。
 #   ローカル : LAKE_DIR=/tmp/fdwh-lake（テスト用のサンプルツリー）
@@ -60,3 +64,18 @@ services:
   dbt-docs-gen:
     <<: *transform-common
     entrypoint: ["python", "-m", "flows.dbt_docs_gen"]
+
+  mart-transfer:
+    image: finance-dwh-transform:latest
+    entrypoint: ["python", "-m", "flows.mart_transfer"]
+    environment:
+      MART_ROOT: /data/mart
+      MART_TRANSFER_HOST: "${MART_TRANSFER_HOST:-}"
+      MART_TRANSFER_USER: "${MART_TRANSFER_USER:-martsync}"
+      MART_TRANSFER_PORT: "${MART_TRANSFER_PORT:-22}"
+      SLACK_WEBHOOK_URL: "${SLACK_WEBHOOK_URL:-}"
+    volumes:
+      - "${DATA_DIR:-../data}/mart:/data/mart:ro"
+      # 転送用の秘密鍵(id_ed25519)とknown_hosts。git管理外、ホスト側で用意する。
+      - "${MART_TRANSFER_SSH_DIR:-../.ssh-mart-transfer}:/ssh:ro"
+    profiles: ["manual"]
