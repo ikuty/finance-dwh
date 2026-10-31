@@ -8,7 +8,9 @@ MCP サーバ（finance-poc/mcp-mart）は「常に最新の mart」を前提に
 流れ（いずれかが失敗したら VPS の current は一切変わらない）:
   1. daily_transform が書いたビルド結果マーカー（MART_ROOT/_BUILD_RESULT.json）を確認。
      dbt build が失敗した日・マーカーが古い日（transform が走っていない）は送らない
-  2. MART_ROOT/*.parquet を DuckDB で読み、空・破損が無いことを確認、sha256 付きの
+  2. 転送対象は dbt の mart モデル（models/mart/*.sql）が出力する Parquet だけ。
+     MART_ROOT に残った廃止モデルの古いファイルは送らない。期待するファイルが欠けて
+     いたら送らない。対象を DuckDB で読み、空・破損が無いことを確認、sha256 付きの
      MANIFEST.json を作る
   3. rsync で VPS の incoming/<run_id>/ へ送る（SSH 鍵認証、ホスト鍵固定）
   4. VPS 側の `activate <run_id>` を呼ぶ（manifest と sha256 を再検証 → releases/ へ移動
@@ -24,6 +26,8 @@ Prefect は使わない（dbt_docs_gen.py と同じ判断: ステップが少な
     MART_TRANSFER_SSH_KEY         秘密鍵のパス（既定 /ssh/id_ed25519）
     MART_TRANSFER_KNOWN_HOSTS     known_hosts のパス（既定 /ssh/known_hosts）
     MART_TRANSFER_MAX_BUILD_AGE_HOURS  ビルド結果マーカーの許容経過時間（既定 6）
+    DBT_PROJECT_DIR               mart モデルの SQL を探す dbt プロジェクト（既定 /app/dbt、
+                                  イメージに焼き込み済み）
 
 Usage:
     python -m flows.mart_transfer
@@ -47,6 +51,9 @@ from pathlib import Path
 from flows.notify import send_slack_notification
 
 MART_ROOT = Path(os.environ.get("MART_ROOT", "/data/mart"))
+DBT_MART_MODELS_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/app/dbt")) / "models" / "mart"
+# mart モデルの config(location=env_var('MART_ROOT', ...) ~ '/xxx.parquet') から出力名を取る
+MART_LOCATION_PATTERN = re.compile(r"""location\s*=\s*env_var\(\s*'MART_ROOT'[^)]*\)\s*~\s*'/([^'/]+\.parquet)'""")
 BUILD_MARKER_NAME = "_BUILD_RESULT.json"
 MANIFEST_NAME = "MANIFEST.json"
 RSYNC_ATTEMPTS = 3
@@ -146,6 +153,33 @@ def check_build_marker(
     return None
 
 
+# --- 転送対象 -------------------------------------------------------------------
+
+
+def expected_mart_files(models_dir: Path | None = None) -> list[str]:
+    """dbt の mart モデルが出力する Parquet のファイル名（ソート済み）。
+
+    MART_ROOT/*.parquet を丸ごと送ると、廃止したモデルの古いファイルが毎回VPSへ
+    紛れ込む（実際に旧 jpx_edinet_valuation_indicators.parquet が約5週間残っていた）。
+    出力名の正は dbt のモデル定義なので、同じイメージに焼き込まれた SQL から導出する。
+    """
+    directory = models_dir or DBT_MART_MODELS_DIR
+    names: set[str] = set()
+    for sql in directory.glob("*.sql"):
+        names.update(MART_LOCATION_PATTERN.findall(sql.read_text(encoding="utf-8")))
+    return sorted(names)
+
+
+def select_transfer_files(
+    mart_root: Path, expected: list[str]
+) -> tuple[list[Path], list[str], list[str]]:
+    """(送るファイル, 欠けている期待ファイル, 送らない余分な*.parquet) を返す。"""
+    present = {p.name for p in mart_root.glob("*.parquet")}
+    missing = [n for n in expected if n not in present]
+    stale = sorted(present - set(expected))
+    return [mart_root / n for n in expected if n in present], missing, stale
+
+
 # --- 検証・manifest -------------------------------------------------------------
 
 
@@ -171,7 +205,7 @@ def count_rows(path: Path) -> int:
 def build_manifest(files: list[Path], run_id: str) -> dict[str, object]:
     """全ファイルを読んで検証し manifest を作る。空・破損があれば ValueError。"""
     if not files:
-        raise ValueError(f"{MART_ROOT} に *.parquet が無い")
+        raise ValueError("転送対象の Parquet が無い")
     entries = []
     for path in files:
         try:
@@ -239,8 +273,16 @@ def transfer(cfg: TransferConfig, logger: logging.Logger) -> tuple[bool, str]:
     if reason:
         return False, f"転送を見送り: {reason}"
 
+    expected = expected_mart_files()
+    if not expected:
+        return False, f"転送を見送り: {DBT_MART_MODELS_DIR} から mart の出力先を取得できない"
+    files, missing, stale = select_transfer_files(MART_ROOT, expected)
+    if missing:
+        return False, f"転送を見送り: 期待する mart が MART_ROOT に無い: {missing}"
+    if stale:
+        logger.warning(f"dbt モデルに無い古い Parquet は送らない（削除してよい）: {stale}")
+
     run_id = dt.datetime.now(dt.UTC).strftime(RUN_ID_FORMAT)
-    files = sorted(MART_ROOT.glob("*.parquet"))
     try:
         manifest = build_manifest(files, run_id)
     except ValueError as e:
