@@ -33,6 +33,24 @@ def mart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
+def _model_sql(filename: str) -> str:
+    return (
+        "{{ config(materialized='external',\n"
+        f"    location=env_var('MART_ROOT', '/data/mart') ~ '/{filename}') }}}}\nselect 1\n"
+    )
+
+
+@pytest.fixture
+def models(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """a.parquet / b.parquet を出力する dbt mart モデルを用意し、探索先を差し替える。"""
+    d = tmp_path / "models_mart"
+    d.mkdir()
+    (d / "mart__a.sql").write_text(_model_sql("a.parquet"))
+    (d / "mart__b.sql").write_text(_model_sql("b.parquet"))
+    monkeypatch.setattr(mart_transfer, "DBT_MART_MODELS_DIR", d)
+    return d
+
+
 @pytest.fixture
 def cfg() -> TransferConfig:
     return TransferConfig(
@@ -175,7 +193,7 @@ def test_activate_sends_activate_command(monkeypatch: pytest.MonkeyPatch, cfg: T
 
 
 def test_transfer_skips_when_build_failed_and_sends_nothing(
-    monkeypatch: pytest.MonkeyPatch, mart: Path, cfg: TransferConfig
+    monkeypatch: pytest.MonkeyPatch, mart: Path, models: Path, cfg: TransferConfig
 ) -> None:
     _write_parquet(mart / "a.parquet", 3)
     mart_transfer.write_build_marker(False, mart)
@@ -187,9 +205,10 @@ def test_transfer_skips_when_build_failed_and_sends_nothing(
 
 
 def test_transfer_does_not_activate_when_rsync_fails(
-    monkeypatch: pytest.MonkeyPatch, mart: Path, cfg: TransferConfig
+    monkeypatch: pytest.MonkeyPatch, mart: Path, models: Path, cfg: TransferConfig
 ) -> None:
     _write_parquet(mart / "a.parquet", 3)
+    _write_parquet(mart / "b.parquet", 3)
     mart_transfer.write_build_marker(True, mart)
     calls: list[list[str]] = []
     monkeypatch.setattr(subprocess, "run", _fake_run(calls, [1] * mart_transfer.RSYNC_ATTEMPTS))
@@ -200,7 +219,7 @@ def test_transfer_does_not_activate_when_rsync_fails(
 
 
 def test_transfer_success_sends_parquet_and_manifest_then_activates(
-    monkeypatch: pytest.MonkeyPatch, mart: Path, cfg: TransferConfig
+    monkeypatch: pytest.MonkeyPatch, mart: Path, models: Path, cfg: TransferConfig
 ) -> None:
     _write_parquet(mart / "a.parquet", 3)
     _write_parquet(mart / "b.parquet", 4)
@@ -224,3 +243,68 @@ def test_transfer_success_sends_parquet_and_manifest_then_activates(
     assert calls[0][0] == "rsync" and calls[1][-1].startswith("activate ")
     # マーカーファイル自体は転送対象に含めない（*.parquet のみ）
     assert all(mart_transfer.BUILD_MARKER_NAME not in " ".join(c) for c in calls)
+
+
+# --- 転送対象(dbt モデルから導出) -------------------------------------------------
+
+
+def test_expected_mart_files_parses_model_locations(models: Path) -> None:
+    (models / "ignored.sql").write_text("select 1  -- location 無し")
+    (models / "_note.yml").write_text("location=env_var('MART_ROOT', '/x') ~ '/z.parquet'")
+    assert mart_transfer.expected_mart_files(models) == ["a.parquet", "b.parquet"]
+
+
+def test_expected_mart_files_matches_real_dbt_models() -> None:
+    """正規表現が実際の mart モデルの書き方に追従していること(書式変更の検知)。"""
+    real = Path(__file__).resolve().parents[2] / "dbt" / "models" / "mart"
+    names = mart_transfer.expected_mart_files(real)
+    assert len(names) == len(list(real.glob("*.sql")))  # 全モデルが1つずつ出力名を持つ
+    assert "jpx_edinet_daily_valuation_indicators.parquet" in names
+
+
+def test_select_transfer_files_separates_missing_and_stale(mart: Path) -> None:
+    _write_parquet(mart / "a.parquet", 1)
+    _write_parquet(mart / "old_removed_model.parquet", 1)
+    files, missing, stale = mart_transfer.select_transfer_files(mart, ["a.parquet", "b.parquet"])
+    assert [f.name for f in files] == ["a.parquet"]
+    assert missing == ["b.parquet"]
+    assert stale == ["old_removed_model.parquet"]
+
+
+def test_transfer_excludes_stale_parquet_from_rsync(
+    monkeypatch: pytest.MonkeyPatch, mart: Path, models: Path, cfg: TransferConfig
+) -> None:
+    _write_parquet(mart / "a.parquet", 3)
+    _write_parquet(mart / "b.parquet", 3)
+    _write_parquet(mart / "old_removed_model.parquet", 3)
+    mart_transfer.write_build_marker(True, mart)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", _fake_run(calls, [0, 0]))
+    ok, _ = mart_transfer.transfer(cfg, logger)
+    assert ok
+    assert not any("old_removed_model" in " ".join(c) for c in calls)
+
+
+def test_transfer_refuses_when_expected_mart_is_missing(
+    monkeypatch: pytest.MonkeyPatch, mart: Path, models: Path, cfg: TransferConfig
+) -> None:
+    _write_parquet(mart / "a.parquet", 3)  # b.parquet が無い
+    mart_transfer.write_build_marker(True, mart)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", _fake_run(calls, []))
+    ok, detail = mart_transfer.transfer(cfg, logger)
+    assert not ok and "b.parquet" in detail
+    assert calls == []
+
+
+def test_transfer_refuses_when_no_models_found(
+    monkeypatch: pytest.MonkeyPatch, mart: Path, cfg: TransferConfig, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(mart_transfer, "DBT_MART_MODELS_DIR", tmp_path / "nonexistent")
+    _write_parquet(mart / "a.parquet", 3)
+    mart_transfer.write_build_marker(True, mart)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", _fake_run(calls, []))
+    ok, detail = mart_transfer.transfer(cfg, logger)
+    assert not ok and "取得できない" in detail
+    assert calls == []

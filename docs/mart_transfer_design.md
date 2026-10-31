@@ -10,7 +10,7 @@ dbt build 完了後、mart の Parquet を ikuty.com（VPS）へ転送する。V
 |---|---|---|---|
 | 0 | Mac Mini / transform | `daily_transform` が dbt build 直後に `MART_ROOT/_BUILD_RESULT.json`（`ok`・`finished_at`）を書く | - |
 | 1 | Mac Mini / mart-transfer | マーカー確認（`ok=true` かつ `MART_TRANSFER_MAX_BUILD_AGE_HOURS`=6 時間以内） | 送らず終了コード1・Slack 通知 |
-| 2 | 同上 | `MART_ROOT/*.parquet` を DuckDB で読み、0行・破損が無いか確認。sha256・行数入り `MANIFEST.json` を作る | 同上 |
+| 2 | 同上 | 転送対象を dbt の mart モデル(`dbt/models/mart/*.sql` の `location=`)から導出。期待ファイルが欠けていれば中止。対象を DuckDB で読み、0行・破損が無いか確認。sha256・行数入り `MANIFEST.json` を作る | 同上 |
 | 3 | 同上 → VPS | rsync（SSH 鍵認証）で `incoming/<run_id>/` へ。`--partial`・最大3回再試行 | VPS の `current` は変わらない |
 | 4 | VPS / `vps/activate_mart.sh` | manifest とファイル構成・サイズ・sha256 を再検証 → `releases/<run_id>/` へ移動 → `current` symlink を `mv -T` で原子的に置換 → 古い世代を掃除 | 検証失敗なら `current` に触れない |
 
@@ -80,11 +80,28 @@ sudo systemctl daemon-reload && sudo systemctl enable --now finance-dwh-mart-tra
 イメージに `openssh-client`・`rsync` を追加した（`transform/Dockerfile`）ため、反映には
 build-push → deploy でイメージの更新が必要。
 
+## 転送対象の決め方（2026-10-31）
+
+`MART_ROOT/*.parquet` を丸ごと送ると、廃止したモデルの古いファイルが毎回 VPS へ紛れ込む
+（実際に旧 `jpx_edinet_valuation_indicators.parquet` が約5週間残り、転送されていた）。
+出力名の正は dbt のモデル定義なので、イメージに焼き込まれた `models/mart/*.sql` の
+`location=env_var('MART_ROOT', ...) ~ '/xxx.parquet'` から導出する。
+
+| ケース | 挙動 |
+|---|---|
+| MART_ROOT に dbt モデルに無い Parquet がある | 送らず、警告ログを出す（削除してよいファイル） |
+| 期待する Parquet が MART_ROOT に無い | 転送を中止（不完全な mart を `current` にしない） |
+| モデルから出力名を1つも取れない | 転送を中止（SQL の書式変更等。`test_expected_mart_files_matches_real_dbt_models` が CI で検知する） |
+
+mart モデルを追加するときは `location=env_var('MART_ROOT', ...) ~ '/xxx.parquet'` の書式を守る
+こと。`manifest.json` ではなくモデルの SQL を読むのは、mart-transfer コンテナに dbt の
+`target/` をマウントしていない（イメージに焼き込んだ `/app/dbt` だけが見える）ため。
+
 ## 既知の制約
 
 | 項目 | 内容 |
 |---|---|
-| 転送量 | 毎回 `*.parquet` 全体（現状 約200MB、日次バリュエーションが大半）。Parquet は丸ごと再生成され rsync の差分が効きにくいため全量送信 |
+| 転送量 | 毎回 mart 全体（現状 約200MB、日次バリュエーションが大半）。初回実機テストは 181秒（約1.2MB/s、rsync が約176秒）。Parquet は丸ごと再生成され rsync の差分が効きにくいため全量送信 |
 | 手動実行 | `docker compose run --rm mart-transfer`。マーカーが古いと見送られる（`MART_TRANSFER_MAX_BUILD_AGE_HOURS` で調整） |
 | 世代管理 | VPS は直近3世代を保持（`MART_KEEP_RELEASES`）。ロールバックは `current` を張り替えるだけ |
 | 未検証 | Mac Mini 実機・実 VPS での通し実行、実データ量での所要時間は未計測 |
