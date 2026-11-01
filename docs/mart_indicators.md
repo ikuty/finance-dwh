@@ -179,6 +179,15 @@ martとして維持し、JPX価格調整の概念を持ち込まない。
 前年同期・前年通期のいずれかが無い場合（上場後2年未満等）はNULL（推測で埋めない）。
 `bps`（期末時点のスナップショット、累積値ではない）はTTM化の対象外。
 
+**決算期変更企業での多重マッチ対策（実データで発覚、重要）**: 決算期変更で異例の
+期間（例: 四半期に加えq4が追加される15か月決算）が挟まると、「fiscal_year-1・
+period_endの月が一致する行」が2件以上ヒットする場合がある（実例: E03377の
+fiscal_year=29にq1(2022-02-28)とannual(2023-02-28)が両方2月で存在し、
+fiscal_year=30のannualから見た前年同期候補が多重マッチ、doc_idが重複して
+ユニーク制約テストが落ちた）。`prior_annual`は`(edinet_code, fiscal_year)`ごとに
+period_end最新の1件、`prior_same_period`は対象行ごとにperiod_typeが一致する方を
+優先した1件に、window関数で事前に一意化してから結合する。
+
 ## mart__jpx_edinet__daily_valuation_indicators
 
 grain: `(jpx_code, file_date)`。株価(`close`)と連動して日次で変化する指標のみを持つ
