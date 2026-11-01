@@ -34,6 +34,24 @@
 --
 -- headquarters_address/prefecture（2026-10-04追加）: mart__edinet__financial_
 -- indicators経由でcleansed__edinet__headquarters由来の値をそのまま通す。
+--
+-- eps_ttm/sales_ttm/dividend_per_share_ttm（TTM=直近12か月、2026-11-01追加）:
+--   四半期・半期開示のeps/sales/dividend_per_shareは期首からの累積値のため、
+--   通期開示が入るたびに「期首からの累積」がリセットされ、前後の開示間で
+--   値が不連続に跳ねる（実データ検証: ジャパニアス(9558)でPERが年2回・約3〜4倍の
+--   振れ幅で切り替わることを確認。[[jquants-price-vs-jpx-report-diff]]とは別の
+--   問題）。TTM = 今回の累積値 + 直前通期(annual)の値 − 1年前の同時点累積値、で
+--   補正する（標準的なTTM補正の式）。period_type='annual'の行はそのままTTM
+--   （=12か月分そのもの）のため補正不要、eps等をそのまま使う。
+--
+--   「1年前の同時点」の判定はperiod_typeの文字列一致ではなく、fiscal_year-1 ＋
+--   extract(month from period_end)の一致で行う（重要）: 2024年4月の四半期報告書
+--   廃止で呼称がq2→halfに変わった銘柄でも、period_endの月そのものは変わらない
+--   ことを実データで確認済み（9558: 旧q2(2024-05-31)→新half(2025-05-31)、
+--   ともに5月）。period_typeの文字列一致では制度改正をまたぐ前年比較が欠落する。
+--
+--   前年同期・前年通期のいずれかが無い（上場後2年未満等）場合はNULL
+--   （推測で埋めない、既存方針と同じ）。
 
 {{ config(
     materialized='external',
@@ -49,6 +67,17 @@ with edinet as (
         left(sec_code, 4) as jpx_code
     from {{ ref('mart__edinet__financial_indicators') }}
     where sec_code is not null
+),
+
+prior_annual as (
+    select edinet_code, fiscal_year, eps, sales, dividend_per_share
+    from edinet
+    where period_type = 'annual'
+),
+
+prior_same_period as (
+    select edinet_code, fiscal_year, period_end, eps, sales, dividend_per_share
+    from edinet
 )
 
 select
@@ -66,11 +95,27 @@ select
     e.sales,
     e.shares_outstanding,
     e.dividend_per_share,
+    case when e.period_type = 'annual' then e.eps
+         when pa.eps is not null and psp.eps is not null then e.eps + pa.eps - psp.eps
+         end as eps_ttm,
+    case when e.period_type = 'annual' then e.sales
+         when pa.sales is not null and psp.sales is not null then e.sales + pa.sales - psp.sales
+         end as sales_ttm,
+    case when e.period_type = 'annual' then e.dividend_per_share
+         when pa.dividend_per_share is not null and psp.dividend_per_share is not null then e.dividend_per_share + pa.dividend_per_share - psp.dividend_per_share
+         end as dividend_per_share_ttm,
     e.headquarters_address,
     e.prefecture,
     p.cum_adjustment_factor as period_end_cum_adj,
     p.shares_cum_adjustment_factor as shares_period_end_cum_adj
 from edinet e
+left join prior_annual pa
+    on pa.edinet_code = e.edinet_code
+    and pa.fiscal_year = e.fiscal_year - 1
+left join prior_same_period psp
+    on psp.edinet_code = e.edinet_code
+    and psp.fiscal_year = e.fiscal_year - 1
+    and extract(month from psp.period_end) = extract(month from e.period_end)
 asof left join {{ ref('intermediate__jpx__daily_prices_adjusted') }} p
     on e.jpx_code = p.code
     and p.file_date <= e.period_end
