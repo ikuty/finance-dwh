@@ -226,6 +226,18 @@ models:
         description: "mart__edinet__financial_indicatorsと同一（詳細はそちらのcolumn定義参照）。"
       - name: eps / bps / sales / shares_outstanding / dividend_per_share
         description: "開示された値そのまま（分割・併合調整前）。mart__edinet__financial_indicatorsと同一。"
+      - name: eps_ttm / sales_ttm / dividend_per_share_ttm
+        description: >
+          TTM(直近12か月)補正後の値（2026-11-01追加）。四半期・半期開示のeps等は
+          期首からの累積値のため、そのまま使うと通期開示の度に不連続に跳ねる
+          （実データ検証: ジャパニアス(9558)でPERが年2回切り替わることを確認）。
+          TTM = 今回の累積値 + 直前通期(annual)の値 − 1年前の同時点累積値、で補正
+          する。period_type='annual'の行はそのままTTM（補正不要）。前年同期・前年
+          通期のいずれかが無い場合（上場後2年未満等）はNULL。「1年前の同時点」は
+          period_typeの文字列一致ではなくfiscal_year-1 ＋ period_endの月一致で
+          判定（2024年4月の四半期報告書廃止による呼称変化(q2→half等)をまたいでも
+          機能させるため）。bps（期末時点のスナップショット、累積値ではない）は
+          対象外。
       - name: headquarters_address / prefecture
         description: "mart__edinet__financial_indicatorsと同一（詳細はそちらのcolumn定義参照）。"
       - name: period_end_cum_adj
@@ -268,28 +280,36 @@ models:
           (shares_file_date_cum_adj)。2026-10-04追加。adj_ratioとは基準日が異なり、
           shares_outstanding_adjusted/market_cap/psrの換算専用。またがなければ1.0。
       - name: eps_adjusted / bps_adjusted
-        description: "adj_ratioを掛けて当該取引日の株式数基準に換算したEPS/BPS。"
+        description: "adj_ratioを掛けて当該取引日の株式数基準に換算したEPS/BPS（累積値そのまま、TTM補正前。開示値の透明性のために残す）。"
       - name: shares_outstanding_adjusted
         description: "shares_adj_ratioの逆数を掛けて当該取引日の株式数基準に換算した発行済株式数。"
+      - name: eps_ttm_adjusted / dividend_per_share_ttm_adjusted
+        description: >
+          disclosed_fundamentals.eps_ttm/dividend_per_share_ttmにadj_ratioを掛けて
+          当該取引日の株式数基準に換算した値（2026-11-01追加）。per/earnings_yield/
+          dividend_yieldの分母はこちらを使う（下記参照）。
       - name: pbr
-        description: "株価純資産倍率＝close / bps_adjusted。"
+        description: "株価純資産倍率＝close / bps_adjusted。bpsは期末時点のスナップショットでTTM補正の対象外。"
       - name: per
         description: >
-          実勢PER＝close / eps_adjusted。実績EPSベース（EDINET開示の確定値）。
-          かぶたん・Yahoo!ファイナンス等がデフォルト表示する「予想PER」（会社発表の
-          進行期業績予想EPSを使用）とは異なる点に注意。実データ検証（2026-09-25、
-          3087）ではみんかぶの実績PER表示と一致した。予想EPSはEDINET開示に含まれず
-          未対応。
+          実勢PER＝close / eps_ttm_adjusted（2026-11-01変更、TTMベース）。実績EPS
+          ベース（EDINET開示の確定値）。かぶたん・Yahoo!ファイナンス等がデフォルト
+          表示する「予想PER」（会社発表の進行期業績予想EPSを使用）とは異なる点に
+          注意。実データ検証（2026-09-25、3087）ではみんかぶの実績PER表示と一致
+          した。予想EPSはEDINET開示に含まれず未対応。四半期・半期開示の期首からの
+          累積値をそのまま使うと通期開示の度に不連続に跳ねるため、disclosed_
+          fundamentals側で事前にTTM(直近12か月)補正したeps_ttmを使う（実データ
+          検証: ジャパニアス(9558)で変更前は年2回切り替わっていたことを確認）。
       - name: market_cap
         description: "時価総額＝close × shares_outstanding_adjusted。"
       - name: psr
-        description: "株価売上高倍率＝market_cap / sales。"
+        description: "株価売上高倍率＝market_cap / sales_ttm（2026-11-01変更、TTMベース。理由はper参照）。"
       - name: earnings_yield
-        description: "株式益回り＝eps_adjusted / close（PERの逆数）。perと同じく実績EPSベース。"
+        description: "株式益回り＝eps_ttm_adjusted / close（PERの逆数、2026-11-01変更）。perと同じく実績EPS・TTMベース。"
       - name: dividend_per_share_adjusted
-        description: "adj_ratioを掛けて当該取引日の株式数基準に換算した1株当たり配当額。"
+        description: "adj_ratioを掛けて当該取引日の株式数基準に換算した1株当たり配当額（累積値そのまま、TTM補正前）。"
       - name: dividend_yield
-        description: "配当利回り＝dividend_per_share_adjusted / close。"
+        description: "配当利回り＝dividend_per_share_ttm_adjusted / close（2026-11-01変更、TTMベース。理由はper参照）。"
 
   - name: mart__jpx_edinet__quarterly_fundamentals
     description: >

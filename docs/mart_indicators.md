@@ -154,7 +154,39 @@ martとして維持し、JPX価格調整の概念を持ち込まない。
 | `jpx_code` | 銘柄コード（JPX、4桁） |
 | `edinet_code`/`sec_code`/`filer_name`/`fiscal_year`/`period_type`/`period_end`/`submit_date_time` | `mart__edinet__financial_indicators`と同一 |
 | `eps`/`bps`/`sales`/`shares_outstanding`/`dividend_per_share` | 開示された値そのまま（分割・併合調整前）。`mart__edinet__financial_indicators`と同一 |
+| `eps_ttm`/`sales_ttm`/`dividend_per_share_ttm` | TTM(直近12か月)補正後の値（下記参照） |
 | `period_end_cum_adj` | 決算期末日時点（以前で直近の取引日）の累積調整係数。`intermediate__jpx__daily_prices_adjusted.cum_adjustment_factor`をASOF JOINで取得 |
+
+### TTM(直近12か月)補正（2026-11-01追加）
+
+四半期・半期開示の`eps`/`sales`/`dividend_per_share`は**期首からの累積値**のため、
+そのまま使うと通期開示が入るたびに値が不連続に跳ねる（実データ検証: ジャパニアス
+(9558)でPERが年2回・約3〜4倍の振れ幅で切り替わることを確認）。株価自体は
+なだらかに動いているだけで、企業の実態が年2回激変しているわけではない。
+
+| 計算式 |
+|---|
+| `period_type = 'annual'`の行: `eps_ttm = eps`（12か月分そのもの、補正不要） |
+| それ以外の行: `eps_ttm = eps + 直前通期(annual)のeps − 1年前の同時点のeps` |
+| `sales_ttm`/`dividend_per_share_ttm`も同じ式（対象列を置き換えるだけ） |
+
+「1年前の同時点」の判定は`period_type`の文字列一致ではなく、`fiscal_year - 1`＋
+`period_end`の**月**一致で行う。2024年4月の四半期報告書廃止で呼称が`q2`→`half`等に
+変わった銘柄でも、`period_end`の月自体は変わらないことを実データで確認済み
+（9558: 旧`q2`(2024-05-31)→新`half`(2025-05-31)、ともに5月）。文字列一致では
+制度改正をまたぐ前年比較が欠落する。
+
+前年同期・前年通期のいずれかが無い場合（上場後2年未満等）はNULL（推測で埋めない）。
+`bps`（期末時点のスナップショット、累積値ではない）はTTM化の対象外。
+
+**決算期変更企業での多重マッチ対策（実データで発覚、重要）**: 決算期変更で異例の
+期間（例: 四半期に加えq4が追加される15か月決算）が挟まると、「fiscal_year-1・
+period_endの月が一致する行」が2件以上ヒットする場合がある（実例: E03377の
+fiscal_year=29にq1(2022-02-28)とannual(2023-02-28)が両方2月で存在し、
+fiscal_year=30のannualから見た前年同期候補が多重マッチ、doc_idが重複して
+ユニーク制約テストが落ちた）。`prior_annual`は`(edinet_code, fiscal_year)`ごとに
+period_end最新の1件、`prior_same_period`は対象行ごとにperiod_typeが一致する方を
+優先した1件に、window関数で事前に一意化してから結合する。
 
 ## mart__jpx_edinet__daily_valuation_indicators
 
@@ -191,17 +223,20 @@ EPS/BPS/`shares_outstanding`は開示時点の株式数のまま。開示の決�
 |---|---|---|
 | `close` | 当日終値（raw、無調整） | `coalesce(pm_close, am_close)`（後場引け優先） |
 | `adj_ratio` | 分割・併合調整比率 | 上表参照 |
-| `eps_adjusted` / `bps_adjusted` | 調整後EPS/BPS | `eps or bps × adj_ratio` |
+| `eps_adjusted` / `bps_adjusted` | 調整後EPS/BPS（累積値そのまま、TTM補正前） | `eps or bps × adj_ratio` |
 | `shares_outstanding_adjusted` | 調整後発行済株式数 | `shares_outstanding ÷ adj_ratio` |
-| `pbr` | 株価純資産倍率 | `close / bps_adjusted` |
-| `per` | 実勢PER | `close / eps_adjusted` |
+| `eps_ttm_adjusted` / `dividend_per_share_ttm_adjusted` | TTM補正後・調整後EPS/1株配当 | `eps_ttm or dividend_per_share_ttm × adj_ratio` |
+| `pbr` | 株価純資産倍率 | `close / bps_adjusted`（`bps`はTTM対象外） |
+| `per` | 実勢PER | `close / eps_ttm_adjusted`（2026-11-01変更、TTMベース） |
 | `market_cap` | 時価総額 | `close × shares_outstanding_adjusted` |
-| `psr` | 株価売上高倍率 | `market_cap / sales` |
-| `earnings_yield` | 株式益回り | `eps_adjusted / close` |
-| `dividend_per_share_adjusted` | 調整後1株当たり配当額 | `dividend_per_share × adj_ratio` |
-| `dividend_yield` | 配当利回り | `dividend_per_share_adjusted / close` |
+| `psr` | 株価売上高倍率 | `market_cap / sales_ttm`（2026-11-01変更、TTMベース） |
+| `earnings_yield` | 株式益回り | `eps_ttm_adjusted / close`（2026-11-01変更、TTMベース） |
+| `dividend_per_share_adjusted` | 調整後1株当たり配当額（累積値そのまま、TTM補正前） | `dividend_per_share × adj_ratio` |
+| `dividend_yield` | 配当利回り | `dividend_per_share_ttm_adjusted / close`（2026-11-01変更、TTMベース） |
 
-分母が0またはNULLの場合は該当指標もNULLになる。
+分母が0またはNULLの場合は該当指標もNULLになる。`per`/`psr`/`dividend_yield`/
+`earnings_yield`のTTM補正の詳細は`mart__jpx_edinet__disclosed_fundamentals`の
+「TTM(直近12か月)補正」節参照。
 
 ### 調整済み生値の逆算
 
@@ -210,13 +245,15 @@ EPS/BPS/`shares_outstanding`は開示時点の株式数のまま。開示の決�
 
 | 逆算式 |
 |---|
-| `eps_adjusted = close / per` |
+| `eps_ttm_adjusted = close / per` |
 | `bps_adjusted = close / pbr` |
 | `shares_outstanding_adjusted = market_cap / close` |
-| `dividend_per_share_adjusted = dividend_yield × close` |
+| `dividend_per_share_ttm_adjusted = dividend_yield × close` |
 
 無調整の`adj_ratio`自体は`mart__jpx_edinet__disclosed_fundamentals`のraw `eps`と
-`eps_adjusted / eps`で求められる。
+`eps_adjusted / eps`で求められる。TTM補正前の累積値そのもの（`eps_adjusted`等）は
+このモデルの列として直接公開されている（2026-11-01以降、`per`等からは逆算できない
+点に注意。`per`は`eps_ttm_adjusted`基準）。
 
 ### `per`・`earnings_yield`は「実績EPS」ベース
 
@@ -240,13 +277,20 @@ EPS/BPS/`shares_outstanding`は開示時点の株式数のまま。開示の決�
 |---|---|
 | `unique`/`not_null` on `mart__jpx_edinet__disclosed_fundamentals.doc_id` | 開示grainの一意性 |
 | `assert_mart__jpx_edinet__daily_valuation_indicators_deduplicated` | `(jpx_code, file_date)`の一意性 |
-| `assert_mart__jpx_edinet__daily_valuation_indicators_per_matches_disclosed`（warn、相対誤差2%） | 企業自己申告PER（決算期末日終値基準）との整合性。結合キー・調整係数ロジックの健全性チェック |
+| `assert_mart__jpx_edinet__daily_valuation_indicators_per_matches_disclosed`（warn、相対誤差2%） | 企業自己申告PER（決算期末日終値基準、TTM補正とは無関係）との整合性。結合キー・調整係数ロジックの健全性チェック |
+| `assert_mart__jpx_edinet__disclosed_fundamentals_ttm_sane`（2026-11-01追加） | `period_type='annual'`の行で`eps_ttm`等が生の`eps`等と完全一致することを確認（CASE文の実装ミス検出） |
 | `assert_mart__edinet__financial_indicators_*`（詳細は`docs/mart_validation.md`） | eps/bpsの逆算検証、salesのYTD単調性、`total_assets >= net_assets`等 |
 | `not_null` on `mart__edinet__reit_financial_indicators`/`mart__edinet__etf_financial_indicators`の`doc_id`/`edinet_code`/`period_end`（ETFは`fund_code`も） | grainキー列の健全性 |
 
 ## 今後の拡張候補（未実装）
 
-- 通期のみを「最新開示」の基準にするか、四半期・半期も含めるかは、現状は問わず
+- ~~通期のみを「最新開示」の基準にするか、四半期・半期も含めるかは、現状は問わず
   直近の開示を採用する設計（四半期EPSは期首からの累計値のため、Q1時点のPERが
-  通期基準より高く出る等の性質を前提とする）。用途に応じて通期限定版が必要に
-  なった場合は別途検討する。
+  通期基準より高く出る等の性質を前提とする）。~~ → ✅ 2026-11-01対応済み（上記
+  「TTM(直近12か月)補正」参照）。開示の採用基準（通期/四半期/半期いずれも直近を
+  採用）自体は変更せず、分母側をTTM補正することで不連続を解消した。
+- 現状のTTM補正は`mart__jpx_edinet__disclosed_fundamentals`（EDINET開示のみ）が
+  対象。`mart__jpx_edinet__quarterly_fundamentals`（ir-disclosure-dl決算短信を
+  含む）側にも同様の補正を広げれば、2024年4月の四半期報告書廃止後もQ1/Q3相当の
+  タッチポイントが増え、開示から開示までの間隔がさらに滑らかになる可能性がある
+  （未検討、別途判断）。
