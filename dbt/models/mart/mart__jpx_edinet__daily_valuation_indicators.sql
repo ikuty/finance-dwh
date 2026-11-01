@@ -75,6 +75,16 @@
 -- 配当額（経営指標等表由来、開示時点の株式数基準）を、eps_adjustedと同じadj_ratio
 -- で対象取引日の株式数基準へ変換した上でdividend_per_share_adjustedとし、
 -- dividend_yield = dividend_per_share_adjusted / closeとする。
+--
+-- per/psr/dividend_yield/earnings_yieldはTTM（直近12か月）ベース(2026-11-01変更、
+-- 重要): 四半期・半期開示のeps/sales/dividend_per_shareは期首からの累積値のため、
+-- これらをそのまま分母にすると通期開示の度に値が不連続に跳ねる（実データ検証:
+-- ジャパニアス(9558)でPERが年2回切り替わることを確認、詳細はmart__jpx_edinet__
+-- disclosed_fundamentalsのコメント参照）。disclosed_fundamentals側で事前計算した
+-- eps_ttm/sales_ttm/dividend_per_share_ttmを使う。bps（期末時点のスナップショット、
+-- 累積値ではない）はTTM化の対象外のためpbrは変更なし。
+-- eps_ttm_adjusted/dividend_per_share_ttm_adjustedはeps_adjusted等と同じadj_ratio
+-- で対象取引日の株式数基準へ変換した値（透明性のため列として公開する）。
 
 {{ config(
     materialized='external',
@@ -96,6 +106,7 @@ fundamentals as (
     select
         jpx_code, doc_id, submit_date_time,
         eps, bps, sales, shares_outstanding, dividend_per_share,
+        eps_ttm, sales_ttm, dividend_per_share_ttm,
         period_end_cum_adj, shares_period_end_cum_adj
     from {{ ref('mart__jpx_edinet__disclosed_fundamentals') }}
 ),
@@ -110,6 +121,7 @@ daily as (
         p.shares_file_date_cum_adj,
         f.doc_id,
         f.eps, f.bps, f.sales, f.shares_outstanding, f.dividend_per_share,
+        f.eps_ttm, f.sales_ttm, f.dividend_per_share_ttm,
         f.period_end_cum_adj, f.shares_period_end_cum_adj
     from prices p
     asof left join fundamentals f
@@ -134,16 +146,20 @@ select
         then shares_outstanding * shares_file_date_cum_adj / shares_period_end_cum_adj end as shares_outstanding_adjusted,
     case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then dividend_per_share * period_end_cum_adj / file_date_cum_adj end as dividend_per_share_adjusted,
+    case when eps_ttm is not null and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then eps_ttm * period_end_cum_adj / file_date_cum_adj end as eps_ttm_adjusted,
+    case when dividend_per_share_ttm is not null and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then dividend_per_share_ttm * period_end_cum_adj / file_date_cum_adj end as dividend_per_share_ttm_adjusted,
     case when bps is not null and bps != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then close / (bps * period_end_cum_adj / file_date_cum_adj) end as pbr,
-    case when eps is not null and eps != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
-        then close / (eps * period_end_cum_adj / file_date_cum_adj) end as per,
+    case when eps_ttm is not null and eps_ttm != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then close / (eps_ttm * period_end_cum_adj / file_date_cum_adj) end as per,
     case when shares_outstanding is not null and shares_period_end_cum_adj is not null and shares_file_date_cum_adj is not null and shares_period_end_cum_adj != 0
         then close * (shares_outstanding * shares_file_date_cum_adj / shares_period_end_cum_adj) end as market_cap,
-    case when sales is not null and sales != 0 and shares_outstanding is not null and shares_period_end_cum_adj is not null and shares_file_date_cum_adj is not null and shares_period_end_cum_adj != 0
-        then (close * (shares_outstanding * shares_file_date_cum_adj / shares_period_end_cum_adj)) / sales end as psr,
-    case when eps is not null and close is not null and close != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
-        then (eps * period_end_cum_adj / file_date_cum_adj) / close end as earnings_yield,
-    case when dividend_per_share is not null and close is not null and close != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
-        then (dividend_per_share * period_end_cum_adj / file_date_cum_adj) / close end as dividend_yield
+    case when sales_ttm is not null and sales_ttm != 0 and shares_outstanding is not null and shares_period_end_cum_adj is not null and shares_file_date_cum_adj is not null and shares_period_end_cum_adj != 0
+        then (close * (shares_outstanding * shares_file_date_cum_adj / shares_period_end_cum_adj)) / sales_ttm end as psr,
+    case when eps_ttm is not null and close is not null and close != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then (eps_ttm * period_end_cum_adj / file_date_cum_adj) / close end as earnings_yield,
+    case when dividend_per_share_ttm is not null and close is not null and close != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then (dividend_per_share_ttm * period_end_cum_adj / file_date_cum_adj) / close end as dividend_yield
 from daily
