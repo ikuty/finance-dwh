@@ -35,6 +35,7 @@ from prefect import get_run_logger, task
 
 import ir_disclosure_kessan_facts as facts_stage
 import ir_disclosure_kessan_pdf as pdf_stage
+from flows.ir_kind import is_reit_ixbrl_url
 
 LAKE_ROOT = os.environ.get("LAKE_ROOT", "/lake")
 LANDING_ROOT = os.environ.get("LANDING_ROOT", "/data/landing")
@@ -67,8 +68,9 @@ def disk_dates(lake_root: Path) -> set[str]:
 def _is_kessan_tanshin_json(path: Path) -> bool:
     """このモジュールは事業会社向け決算短信PDFの正規表現パーサー(ir_disclosure_kessan_
     facts.py)専用。REIT(投資法人)の決算短信もdisclosure_kind='kessan_tanshin'だが、
-    メタデータJSONに'ixbrl_url'を持つ(ir-disclosure-dl側のbuild_pdf_metadata、2026-10-11
-    追加)。REITはPDFではなくiXBRL(tse-re-t:タクソノミ)から取得する専用パイプライン
+    メタデータJSONの'ixbrl_url'がREITのiXBRL(ファイル名のタクソノミが`re`)になる
+    (ir-disclosure-dl側のbuild_pdf_metadata、2026-10-11追加)。事業会社の決算短信も
+    'ixbrl_url'を持つため、有無ではなくflows/ir_kind.pyのタクソノミ判定で見分ける。REITはPDFではなくiXBRL(tse-re-t:タクソノミ)から取得する専用パイプライン
     (load_ir_disclosure_reit.py)で扱うため、ここでは除外する。除外しないと、企業向けの
     「１株当たり」「売上高」等の見出しを前提にしたこのモジュールの正規表現が、REITの
     「１口当たり」「営業収益」といった異なる見出しに対して意味のない結果（ほぼ全列
@@ -77,7 +79,7 @@ def _is_kessan_tanshin_json(path: Path) -> bool:
         meta: dict[str, str] = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return meta.get("disclosure_kind") == "kessan_tanshin" and not meta.get("ixbrl_url")
+    return meta.get("disclosure_kind") == "kessan_tanshin" and not is_reit_ixbrl_url(meta.get("ixbrl_url"))
 
 
 def _is_valid_part(path: Path) -> bool:

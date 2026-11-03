@@ -93,6 +93,17 @@ def test_disk_dates_excludes_reit_ixbrl_metadata(tmp_path: Path) -> None:
     assert m.disk_dates(tmp_path) == set()
 
 
+def test_disk_dates_includes_business_company_with_ixbrl(tmp_path: Path) -> None:
+    # 事業会社の決算短信にもixbrl_urlが付く(2026-10〜)。タクソノミがedなら対象に含める
+    # (ixbrl_urlの有無だけで除外すると、JT 2026-10-29の第3四半期決算短信等が丸ごと漏れる)。
+    make_kessan_pdf(
+        tmp_path, "2026-10-29", "E00492", "doc9",
+        ixbrl_url="https://www2.jpx.co.jp/disc/29140/081220261029558975_tse-qcedifsm-29140-ixbrl.htm",
+    )
+
+    assert m.disk_dates(tmp_path) == {"2026-10-29"}
+
+
 def test_is_kessan_tanshin_json_rejects_reit_metadata(tmp_path: Path) -> None:
     make_kessan_pdf(tmp_path, "2026-09-03", "E24347", "doc3", ixbrl_url="https://example/ixbrl.htm")
     json_path = tmp_path / "ir-disclosure-dl" / "raw" / "2026" / "09" / "03" / "E24347" / "doc3.json"
