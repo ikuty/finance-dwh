@@ -37,6 +37,7 @@ from prefect import get_run_logger, task
 
 import ir_disclosure_kessan_facts as kessan_facts_stage
 import ir_disclosure_reit_ixbrl as ixbrl_stage
+from flows.ir_kind import is_reit_ixbrl_url
 
 LAKE_ROOT = os.environ.get("LAKE_ROOT", "/lake")
 LANDING_ROOT = os.environ.get("LANDING_ROOT", "/data/landing")
@@ -46,14 +47,14 @@ JST = datetime.timezone(datetime.timedelta(hours=9))
 
 
 def _is_reit_ixbrl_json(path: Path) -> bool:
-    """REIT(投資法人)の決算短信メタデータか判定する。'ixbrl_url'が設定されている
-    ものがREIT(load_ir_disclosure_kessan._is_kessan_tanshin_jsonの判定と対になる、
+    """REIT(投資法人)の決算短信メタデータか判定する。'ixbrl_url'のタクソノミが
+    REIT(`re`)のものがREIT(load_ir_disclosure_kessan._is_kessan_tanshin_jsonの判定と対になる、
     詳細はそちら参照)。"""
     try:
         meta: dict[str, str] = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return meta.get("disclosure_kind") == "kessan_tanshin" and bool(meta.get("ixbrl_url"))
+    return meta.get("disclosure_kind") == "kessan_tanshin" and is_reit_ixbrl_url(meta.get("ixbrl_url"))
 
 
 def _is_valid_part(path: Path) -> bool:
