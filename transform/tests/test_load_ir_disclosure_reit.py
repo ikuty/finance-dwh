@@ -94,6 +94,17 @@ def test_disk_dates_requires_ixbrl_url(tmp_path: Path) -> None:
     assert m.disk_dates(tmp_path) == {"2026-09-17"}
 
 
+def test_is_reit_ixbrl_json_rejects_business_company_ixbrl(tmp_path: Path) -> None:
+    # 事業会社の決算短信がixbrl_urlを持っても、REIT用パイプラインの対象にしない
+    make_non_reit_pdf(tmp_path, "2026-10-29", "E00492", "doc9")
+    json_path = tmp_path / "ir-disclosure-dl" / "raw" / "2026" / "10" / "29" / "E00492" / "doc9.json"
+    meta = json.loads(json_path.read_text(encoding="utf-8"))
+    meta["ixbrl_url"] = "https://www2.jpx.co.jp/disc/29140/x_tse-qcedifsm-29140-ixbrl.htm"
+    json_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+    assert m._is_reit_ixbrl_json(json_path) is False
+
+
 def test_is_reit_ixbrl_json_rejects_non_reit_metadata(tmp_path: Path) -> None:
     make_non_reit_pdf(tmp_path, "2026-09-18", "E00012", "doc2")
     json_path = tmp_path / "ir-disclosure-dl" / "raw" / "2026" / "09" / "18" / "E00012" / "doc2.json"
