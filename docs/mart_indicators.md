@@ -212,7 +212,28 @@ EPS/BPS/`shares_outstanding`は開示時点の株式数のまま。開示の決�
 | `adj_ratio = period_end_cum_adj / file_date_cum_adj` |
 | `eps_adjusted = eps × adj_ratio` |
 | `bps_adjusted = bps × adj_ratio` |
-| `shares_outstanding_adjusted = shares_outstanding ÷ adj_ratio`（株数は逆方向） |
+| `shares_adj_ratio = shares_period_end_cum_adj / file_date_cum_adj` |
+| `shares_outstanding_adjusted = shares_outstanding ÷ shares_adj_ratio`（株数は逆方向） |
+| `dividend_per_share_adjusted = dividend_per_share × shares_adj_ratio` |
+
+発行済株式数と1株配当は`adj_ratio`ではなく`shares_adj_ratio`を使う（2026-11-04修正、
+issue #83）。決算期末日時点の「実際の」株数・「実際に支払われた」配当は、分割・併合の
+**効力発生日**基準（`shares_period_end_cum_adj`）で換算する必要がある一方、取引日側は
+`close`と同じ**権利落ち日**基準（`file_date_cum_adj`）で揃える。EPS/BPSは会社が期末後の
+分割を遡及適用して開示するため、従来どおり`adj_ratio`（権利落ち日基準）で正しい。
+
+決算期末日が`権利落ち日 ≦ 期末日 ＜ 効力発生日`の隙間に入る開示（全期間で約780件。
+多くの企業が期末翌月1日を効力発生日にするため構造的に頻発）で、EPS/BPSは遡及修正済み
+（係数1）なのに配当は分割前の実額のまま開示される。例: 京王電鉄(9008)の2026年3月期は
+1株配当110円（決算短信注記「株式分割前の実際の配当金の額」）で、旧式では配当利回りが
+14.3%（正しくは約2.9%）、権利落ち日〜効力発生日の2日間は時価総額が約960億円（正しくは
+約4,700億円）と出ていた。分割をまたがない開示や、期末が隙間の前後に収まる開示では
+値は変わらない。
+
+**既知の限界**: 隙間に期末が入る年次開示279件のうち、前期の配当額との比較で配当を
+遡及修正して開示していると疑われるのは7件（4439・9368・9780・9223・9107・7071・
+4055、いずれも2021〜2025年）。残り272件は分割前の実額で開示されていた。この7件は
+修正後も二重に調整されて配当が過小になるが、開示ごとの判定手段が無いため許容する。
 
 分割・併合をまたいでいなければ`adj_ratio = 1`（無調整）。`sales`は株式数に依存しない
 ため調整不要（開示値そのまま）。
@@ -224,14 +245,16 @@ EPS/BPS/`shares_outstanding`は開示時点の株式数のまま。開示の決�
 | `close` | 当日終値（raw、無調整） | `coalesce(pm_close, am_close)`（後場引け優先） |
 | `adj_ratio` | 分割・併合調整比率 | 上表参照 |
 | `eps_adjusted` / `bps_adjusted` | 調整後EPS/BPS（累積値そのまま、TTM補正前） | `eps or bps × adj_ratio` |
-| `shares_outstanding_adjusted` | 調整後発行済株式数 | `shares_outstanding ÷ adj_ratio` |
-| `eps_ttm_adjusted` / `dividend_per_share_ttm_adjusted` | TTM補正後・調整後EPS/1株配当 | `eps_ttm or dividend_per_share_ttm × adj_ratio` |
+| `shares_adj_ratio` | 株数・配当用の調整比率 | 上表参照 |
+| `shares_outstanding_adjusted` | 調整後発行済株式数 | `shares_outstanding ÷ shares_adj_ratio` |
+| `eps_ttm_adjusted` | TTM補正後・調整後EPS | `eps_ttm × adj_ratio` |
+| `dividend_per_share_ttm_adjusted` | TTM補正後・調整後1株配当 | `dividend_per_share_ttm × shares_adj_ratio` |
 | `pbr` | 株価純資産倍率 | `close / bps_adjusted`（`bps`はTTM対象外） |
 | `per` | 実勢PER | `close / eps_ttm_adjusted`（2026-11-01変更、TTMベース） |
 | `market_cap` | 時価総額 | `close × shares_outstanding_adjusted` |
 | `psr` | 株価売上高倍率 | `market_cap / sales_ttm`（2026-11-01変更、TTMベース） |
 | `earnings_yield` | 株式益回り | `eps_ttm_adjusted / close`（2026-11-01変更、TTMベース） |
-| `dividend_per_share_adjusted` | 調整後1株当たり配当額（累積値そのまま、TTM補正前） | `dividend_per_share × adj_ratio` |
+| `dividend_per_share_adjusted` | 調整後1株当たり配当額（累積値そのまま、TTM補正前） | `dividend_per_share × shares_adj_ratio` |
 | `dividend_yield` | 配当利回り | `dividend_per_share_ttm_adjusted / close`（2026-11-01変更、TTMベース） |
 
 分母が0またはNULLの場合は該当指標もNULLになる。`per`/`psr`/`dividend_yield`/
