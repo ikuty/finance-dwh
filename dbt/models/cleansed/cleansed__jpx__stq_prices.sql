@@ -95,7 +95,11 @@ typed as (
     left join {{ ref('jpx_tpm_fund_codes') }} tpm on tpm.code = b.code
 )
 
-select
+-- distinct: JPXの形式CのPDFで、同じ銘柄が立会市場(セクション1)に同一内容で2行載る日が
+-- ある(2026-11-02のグロース4銘柄 141A・186A・4478・4588で確認、解析の重複ではなく
+-- PDFに2行ある。過去約280日では他に無し)。全列が同一の完全重複なので除く。値が異なる
+-- 重複が将来出た場合はdistinctでは残るため、assert_..._deduplicatedが引き続き検知する。
+select distinct
     t.file_date,
     t.code,
     t.trading_unit,
