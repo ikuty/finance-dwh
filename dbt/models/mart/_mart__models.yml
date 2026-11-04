@@ -276,18 +276,20 @@ models:
       - name: shares_adj_ratio
         description: >
           決算期末日時点の累積調整係数(分割・併合の効力発生日基準、
-          shares_period_end_cum_adj) ÷ 当該取引日の同基準の累積調整係数
-          (shares_file_date_cum_adj)。2026-10-04追加。adj_ratioとは基準日が異なり、
-          shares_outstanding_adjusted/market_cap/psrの換算専用。またがなければ1.0。
+          shares_period_end_cum_adj) ÷ 当該取引日の累積調整係数(権利落ち日基準、
+          file_date_cum_adj。closeと同じ基準)。発行済株式数と1株配当の換算専用
+          （2026-11-04変更、issue #83。従来は取引日側も効力発生日基準で、権利落ち日〜
+          効力発生日の間に時価総額が分割比分だけ過小になっていた）。またがなければ1.0。
       - name: eps_adjusted / bps_adjusted
         description: "adj_ratioを掛けて当該取引日の株式数基準に換算したEPS/BPS（累積値そのまま、TTM補正前。開示値の透明性のために残す）。"
       - name: shares_outstanding_adjusted
-        description: "shares_adj_ratioの逆数を掛けて当該取引日の株式数基準に換算した発行済株式数。"
+        description: "shares_adj_ratioで割って当該取引日の株式数基準に換算した発行済株式数。"
       - name: eps_ttm_adjusted / dividend_per_share_ttm_adjusted
         description: >
-          disclosed_fundamentals.eps_ttm/dividend_per_share_ttmにadj_ratioを掛けて
-          当該取引日の株式数基準に換算した値（2026-11-01追加）。per/earnings_yield/
-          dividend_yieldの分母はこちらを使う（下記参照）。
+          disclosed_fundamentals.eps_ttm/dividend_per_share_ttmを当該取引日の株式数
+          基準に換算した値（2026-11-01追加）。epsはadj_ratio、1株配当はshares_adj_ratio
+          を掛ける（配当は分割前の実額で開示されるため。2026-11-04変更）。per/
+          earnings_yield/dividend_yieldの分母はこちらを使う（下記参照）。
       - name: pbr
         description: "株価純資産倍率＝close / bps_adjusted。bpsは期末時点のスナップショットでTTM補正の対象外。"
       - name: per
@@ -307,7 +309,7 @@ models:
       - name: earnings_yield
         description: "株式益回り＝eps_ttm_adjusted / close（PERの逆数、2026-11-01変更）。perと同じく実績EPS・TTMベース。"
       - name: dividend_per_share_adjusted
-        description: "adj_ratioを掛けて当該取引日の株式数基準に換算した1株当たり配当額（累積値そのまま、TTM補正前）。"
+        description: "shares_adj_ratioを掛けて当該取引日の株式数基準に換算した1株当たり配当額（累積値そのまま、TTM補正前。2026-11-04にadj_ratioから変更、issue #83）。"
       - name: dividend_yield
         description: "配当利回り＝dividend_per_share_ttm_adjusted / close（2026-11-01変更、TTMベース。理由はper参照）。"
 
