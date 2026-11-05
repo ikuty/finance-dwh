@@ -186,3 +186,28 @@ models:
         description: "剰余金又は欠損金（△）、投資信託(jppfs_cor:SurplusDeficitFND)。"
       - name: reserve_for_distribution
         description: "分配準備積立金、投資信託(jppfs_cor:ReserveForDistributionFND)。"
+
+  - name: intermediate__ir_disclosure__bps_estimates
+    description: >
+      決算短信（四半期・半期・通期）の純資産から推定した、期末時点の1株当たり純資産
+      （BPS）（毎回フル rebuild、Parquet、2026-11-05新設）。BPSは年次にしか載らず、直近の
+      開示が四半期・半期だとPBRがNULLになっていた問題への対応。前期末（年次）のBPSに、
+      同じ決算短信の当期末÷前期末の純資産の比を掛けて推定する。純資産が前期比±10%超
+      動いた行は株数の変化（増資・自己株式の取得）の影響が大きいため推定せず、
+      estimate_status='ratio_out_of_range'とする。精度は元SQLのコメント参照
+      （J-Quants 229件との照合で絶対誤差の中央値0.2%）。
+    columns:
+      - name: edinet_code
+        data_tests: [not_null]
+      - name: period_end
+        data_tests: [not_null]
+      - name: bps_estimated
+        description: "推定BPS（決算短信の期末時点の株式数基準、period_end_cum_adjと対）。estimate_status='ok'のときのみ値を持つ。"
+      - name: period_end_cum_adj
+        description: "決算短信の期末日時点の累積調整係数（権利落ち日基準）。"
+      - name: estimate_status
+        description: "ok / ratio_out_of_range（純資産が前期比±10%超） / net_assets_missing / no_prior_annual / no_adjustment_factor。"
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['ok', 'ratio_out_of_range', 'net_assets_missing', 'no_prior_annual', 'no_adjustment_factor']

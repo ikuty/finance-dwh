@@ -125,6 +125,59 @@ fundamentals as (
     from {{ ref('mart__jpx_edinet__disclosed_fundamentals') }}
 ),
 
+-- PBR用のBPSの時系列（2026-11-05追加）: BPSは年次にしか載らないため、直近の開示が
+-- 半期・四半期だとPBRがNULLになっていた。決算短信の純資産から推定したBPS
+-- （intermediate__ir_disclosure__bps_estimates）を加え、各日で「期末が最も新しい」BPSを
+-- 採用する。期末が同じ場合の優先順位: EDINETのBPS(3) > 決算短信の推定(2) > BPSのないEDINET
+-- 行(1) > 推定できなかった決算短信(0)。最新の期末の行にBPSが無い（推定も不可）場合は、
+-- 古い年次のBPSを繰り越さずPBRをNULLにする（古い純資産で値が歪むため）。
+-- 決算短信は開示日の翌日から参照可能（EDINETのsubmit_date_timeを日付と比較する既存の
+-- 扱いに合わせ、当日の引け後の開示を先読みしない）。
+bps_events as (
+    select
+        jpx_code,
+        submit_date_time                             as disclosed_at,
+        period_end,
+        case when bps is not null then 3 else 1 end  as prio,
+        bps                                          as bps_pe,
+        period_end_cum_adj                           as pe_cum_adj,
+        'edinet'                                     as basis
+    from {{ ref('mart__jpx_edinet__disclosed_fundamentals') }}
+    union all
+    select
+        jpx_code,
+        cast(disclosed_at as timestamp) + interval 1 day as disclosed_at,
+        period_end,
+        case when bps_estimated is not null then 2 else 0 end as prio,
+        bps_estimated                                as bps_pe,
+        period_end_cum_adj                           as pe_cum_adj,
+        'tanshin_estimated'                          as basis
+    from {{ ref('intermediate__ir_disclosure__bps_estimates') }}
+    -- 推定できなかった理由が「純資産が大きく動いた」(ratio_out_of_range)なら、古い年次のBPSは
+    -- 当てにならないのでNULLの行として採用する。純資産が取れない・前期の年次が無い等の
+    -- 抽出・データ不足の場合は決算短信を無視し、従来どおり（その時点の最新の開示で判定）にする。
+    where estimate_status in ('ok', 'ratio_out_of_range')
+),
+
+-- 開示日順に、その時点までで「期末が最も新しい（同点なら優先順位が高く、それも同じなら
+-- 開示日が新しい）」行を持ち越す（訂正報告書などで同じ期末の行が複数ある場合に、直近の開示を採る）。
+bps_timeline as (
+    select
+        jpx_code,
+        disclosed_at,
+        arg_max(
+            struct_pack(period_end := period_end, bps_pe := bps_pe, pe_cum_adj := pe_cum_adj, basis := basis),
+            (date_diff('day', date '1970-01-01', period_end) * 10 + prio) * 10000000000
+                + cast(epoch(disclosed_at) as bigint)
+        ) over (
+            partition by jpx_code
+            order by disclosed_at, period_end, prio
+            rows between unbounded preceding and current row
+        ) as best
+    from bps_events
+    where period_end is not null
+),
+
 -- 各取引日について、その日「時点で開示済み」の直近の開示をASOF JOINで判定する。
 daily as (
     select
@@ -135,11 +188,16 @@ daily as (
         f.doc_id,
         f.eps, f.bps, f.sales, f.shares_outstanding, f.dividend_per_share,
         f.eps_ttm, f.sales_ttm, f.dividend_per_share_ttm,
-        f.period_end_cum_adj, f.shares_period_end_cum_adj
+        f.period_end_cum_adj, f.shares_period_end_cum_adj,
+        b.best.bps_pe as bps_timeline_bps, b.best.pe_cum_adj as bps_timeline_cum_adj,
+        b.best.basis as bps_timeline_basis, b.best.period_end as bps_timeline_period_end
     from prices p
     asof left join fundamentals f
         on p.code = f.jpx_code
         and f.submit_date_time <= p.file_date
+    asof left join bps_timeline b
+        on p.code = b.jpx_code
+        and b.disclosed_at <= p.file_date
 )
 
 select
@@ -153,8 +211,8 @@ select
         then shares_period_end_cum_adj / file_date_cum_adj end as shares_adj_ratio,
     case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then eps * period_end_cum_adj / file_date_cum_adj end as eps_adjusted,
-    case when period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
-        then bps * period_end_cum_adj / file_date_cum_adj end as bps_adjusted,
+    case when bps_timeline_bps is not null and bps_timeline_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then bps_timeline_bps * bps_timeline_cum_adj / file_date_cum_adj end as bps_adjusted,
     case when shares_period_end_cum_adj is not null and shares_period_end_cum_adj != 0 and file_date_cum_adj is not null
         then shares_outstanding * file_date_cum_adj / shares_period_end_cum_adj end as shares_outstanding_adjusted,
     case when shares_period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
@@ -163,8 +221,12 @@ select
         then eps_ttm * period_end_cum_adj / file_date_cum_adj end as eps_ttm_adjusted,
     case when dividend_per_share_ttm is not null and shares_period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then dividend_per_share_ttm * shares_period_end_cum_adj / file_date_cum_adj end as dividend_per_share_ttm_adjusted,
-    case when bps is not null and bps != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
-        then close / (bps * period_end_cum_adj / file_date_cum_adj) end as pbr,
+    case when bps_timeline_bps is not null and bps_timeline_bps != 0 and bps_timeline_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then close / (bps_timeline_bps * bps_timeline_cum_adj / file_date_cum_adj) end as pbr,
+    case when bps_timeline_bps is not null and bps_timeline_bps != 0 and bps_timeline_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then bps_timeline_basis end as pbr_basis,
+    case when bps_timeline_bps is not null and bps_timeline_bps != 0 and bps_timeline_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then bps_timeline_period_end end as pbr_bps_period_end,
     case when eps_ttm is not null and eps_ttm != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then close / (eps_ttm * period_end_cum_adj / file_date_cum_adj) end as per,
     case when shares_outstanding is not null and shares_period_end_cum_adj is not null and shares_period_end_cum_adj != 0 and file_date_cum_adj is not null

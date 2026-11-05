@@ -281,7 +281,7 @@ models:
           （2026-11-04変更、issue #83。従来は取引日側も効力発生日基準で、権利落ち日〜
           効力発生日の間に時価総額が分割比分だけ過小になっていた）。またがなければ1.0。
       - name: eps_adjusted / bps_adjusted
-        description: "adj_ratioを掛けて当該取引日の株式数基準に換算したEPS/BPS（累積値そのまま、TTM補正前。開示値の透明性のために残す）。"
+        description: "当該取引日の株式数基準に換算したEPS/BPS（累積値そのまま、TTM補正前。開示値の透明性のために残す）。bps_adjustedは2026-11-05からpbrと同じBPS（pbr_basis参照）を使う。"
       - name: shares_outstanding_adjusted
         description: "shares_adj_ratioで割って当該取引日の株式数基準に換算した発行済株式数。"
       - name: eps_ttm_adjusted / dividend_per_share_ttm_adjusted
@@ -291,7 +291,20 @@ models:
           を掛ける（配当は分割前の実額で開示されるため。2026-11-04変更）。per/
           earnings_yield/dividend_yieldの分母はこちらを使う（下記参照）。
       - name: pbr
-        description: "株価純資産倍率＝close / bps_adjusted。bpsは期末時点のスナップショットでTTM補正の対象外。"
+        description: >
+          株価純資産倍率＝close / bps_adjusted。bpsは期末時点のスナップショットでTTM補正の
+          対象外。2026-11-05変更: BPSは年次にしか載らないため、直近の開示が四半期・半期だと
+          NULLになっていた。決算短信の純資産から推定したBPS（intermediate__ir_disclosure__
+          bps_estimates）を加え、各日で「期末が最も新しい」BPSを使う（pbr_basis参照）。
+          最新の期末の決算短信で純資産が前期比±10%超動いている銘柄は、古い年次のBPSを
+          繰り越さずNULLにする。
+      - name: pbr_basis
+        description: "PBRのBPSの出所。edinet（年次等のEDINET開示のBPS） / tanshin_estimated（決算短信の純資産からの推定BPS）。pbrがNULLの行はNULL。"
+        data_tests:
+          - accepted_values:
+              values: ['edinet', 'tanshin_estimated']
+      - name: pbr_bps_period_end
+        description: "PBRのBPSの期末日（決算期末または決算短信の期末）。pbrがNULLの行はNULL。"
       - name: per
         description: >
           実勢PER＝close / eps_ttm_adjusted（2026-11-01変更、TTMベース）。実績EPS
