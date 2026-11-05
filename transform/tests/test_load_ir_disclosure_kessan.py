@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 from pathlib import Path
 
 import duckdb
@@ -231,3 +232,28 @@ def test_load_one_routes_correction_title_via_real_classify(
     facts_row = dict(zip(facts_columns, parquet_rows(facts_out)[0], strict=True))
     assert facts_row["extraction_status"] == "correction"
     assert facts_row["sales"] is None
+
+
+# --- バックログの時間予算 (finance-dwh Issue #94 D1/D2) ---
+
+
+def test_load_dates_stops_at_time_budget_and_reports_remaining(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    loaded: list[str] = []
+
+    def fake_load_one(lake: Path, landing: Path, d: str) -> int:
+        loaded.append(d)
+        return 2
+
+    monkeypatch.setattr(m, "load_one", fake_load_one)
+    ticks = iter([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])  # 開始, 各日の判定前
+    result = m._load_dates(
+        ["d3", "d2", "d1", "d0"], tmp_path, tmp_path, logging.getLogger("t"), time_budget_seconds=2.5, clock=lambda: next(ticks)
+    )
+    assert loaded == ["d3", "d2"]  # 先頭(新しい日付)から、予算超過前の日まで
+    assert result == {"dates": 2, "rows": 4, "remaining": 2}
+
+
+def test_load_dates_without_budget_loads_everything(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(m, "load_one", lambda lake, landing, d: 1)
+    result = m._load_dates(["a", "b"], tmp_path, tmp_path, logging.getLogger("t"))
+    assert result == {"dates": 2, "rows": 2, "remaining": 0}

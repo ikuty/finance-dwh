@@ -299,7 +299,8 @@ def daily_transform() -> str:
     ir_disclosure_backlog_loaded = load_ir_disclosure_kessan_backlog()
     logger.info(
         f"landing 取り込み(ir-disclosure-dl決算短信・バックログ): "
-        f"{ir_disclosure_backlog_loaded['dates']} 日 / {ir_disclosure_backlog_loaded['rows']} 件"
+        f"{ir_disclosure_backlog_loaded['dates']} 日 / {ir_disclosure_backlog_loaded['rows']} 件 "
+        f"(未処理のバックログ残り {ir_disclosure_backlog_loaded['remaining']} 日)"
     )
 
     ir_disclosure_reit_backlog_loaded = load_ir_disclosure_reit_backlog()
