@@ -27,6 +27,8 @@ import datetime
 import json
 import logging
 import os
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 import duckdb
@@ -40,6 +42,9 @@ from flows.ir_kind import is_reit_ixbrl_url
 LAKE_ROOT = os.environ.get("LAKE_ROOT", "/lake")
 LANDING_ROOT = os.environ.get("LANDING_ROOT", "/data/landing")
 LOOKBACK_DAYS = int(os.environ.get("LANDING_LOOKBACK_DAYS", "7"))
+# バックログ取り込みの時間予算(秒)。0以下なら無制限(従来どおり)。
+# 決算短信の大量バックフィル(finance-dwh Issue #94)では、電源枠を超えないよう設定する。
+BACKLOG_TIME_BUDGET_SECONDS = float(os.environ.get("KESSAN_BACKLOG_TIME_BUDGET_SECONDS", "0"))
 
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
@@ -193,13 +198,31 @@ def load_one(lake_root: Path, landing_root: Path, date: str) -> int:
 _Logger = logging.Logger | logging.LoggerAdapter[logging.Logger]
 
 
-def _load_dates(dates: list[str], lake_root: Path, landing_root: Path, logger: _Logger) -> dict[str, int]:
+def _load_dates(
+    dates: list[str],
+    lake_root: Path,
+    landing_root: Path,
+    logger: _Logger,
+    time_budget_seconds: float = 0.0,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, int]:
+    """datesを先頭から順に取り込む。time_budget_seconds>0なら、経過がそれに達した時点で
+    打ち切り、残りの日数を"remaining"で返す(日付単位で再開できるため、次回に持ち越せる)。
+    予算の判定は1日ぶんの取り込みの前に行うので、最大で1日ぶん超過しうる。"""
     total = 0
+    done = 0
+    started = clock()
     for date in dates:
+        if time_budget_seconds > 0 and clock() - started >= time_budget_seconds:
+            break
         rows = load_one(lake_root, landing_root, date)
         total += rows
+        done += 1
         logger.info(f"  {date}: {rows} 件")
-    return {"dates": len(dates), "rows": total}
+    remaining = len(dates) - done
+    if remaining:
+        logger.info(f"  時間予算({time_budget_seconds:.0f}秒)に達したため残り{remaining}日は次回以降に持ち越し")
+    return {"dates": done, "rows": total, "remaining": remaining}
 
 
 @task
@@ -225,7 +248,12 @@ def load_ir_disclosure_kessan_backlog() -> dict[str, int]:
     lake_root = Path(LAKE_ROOT)
     landing_root = Path(LANDING_ROOT)
     today = datetime.datetime.now(JST).date()
-    dates = backlog_dates_to_load(lake_root, landing_root, today, LOOKBACK_DAYS)
+    # 新しい日付から取り込む(時間予算で打ち切っても、直近の分が先に反映される)
+    dates = sorted(backlog_dates_to_load(lake_root, landing_root, today, LOOKBACK_DAYS), reverse=True)
     head = ", ".join(dates[:3]) + (" ..." if len(dates) > 3 else "")
-    logger.info(f"ir_disclosure_kessan 取り込み対象(バックログ): {len(dates)} 日 [{head}]")
-    return _load_dates(dates, lake_root, landing_root, logger)
+    budget = BACKLOG_TIME_BUDGET_SECONDS
+    logger.info(
+        f"ir_disclosure_kessan 取り込み対象(バックログ): {len(dates)} 日 [{head}] "
+        f"時間予算={'無制限' if budget <= 0 else f'{budget:.0f}秒'}"
+    )
+    return _load_dates(dates, lake_root, landing_root, logger, budget)
