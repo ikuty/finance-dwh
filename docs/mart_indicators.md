@@ -244,12 +244,13 @@ issue #83）。決算期末日時点の「実際の」株数・「実際に支�
 |---|---|---|
 | `close` | 当日終値（raw、無調整） | `coalesce(pm_close, am_close)`（後場引け優先） |
 | `adj_ratio` | 分割・併合調整比率 | 上表参照 |
-| `eps_adjusted` / `bps_adjusted` | 調整後EPS/BPS（累積値そのまま、TTM補正前） | `eps or bps × adj_ratio` |
+| `eps_adjusted` / `bps_adjusted` | 調整後EPS/BPS（累積値そのまま、TTM補正前）。`bps_adjusted`は`pbr`と同じBPS（`pbr_basis`参照） | `eps or bps × adj_ratio` |
 | `shares_adj_ratio` | 株数・配当用の調整比率 | 上表参照 |
 | `shares_outstanding_adjusted` | 調整後発行済株式数 | `shares_outstanding ÷ shares_adj_ratio` |
 | `eps_ttm_adjusted` | TTM補正後・調整後EPS | `eps_ttm × adj_ratio` |
 | `dividend_per_share_ttm_adjusted` | TTM補正後・調整後1株配当 | `dividend_per_share_ttm × shares_adj_ratio` |
-| `pbr` | 株価純資産倍率 | `close / bps_adjusted`（`bps`はTTM対象外） |
+| `pbr` | 株価純資産倍率 | `close / bps_adjusted`（`bps`はTTM対象外。BPSの出所は`pbr_basis`、下記「PBRのBPSと決算短信からの推定」参照） |
+| `pbr_basis` / `pbr_bps_period_end` | PBRのBPSの出所（`edinet`または`tanshin_estimated`）とその期末日 | `pbr`がNULLの行はNULL |
 | `per` | 実勢PER | `close / eps_ttm_adjusted`（2026-11-01変更、TTMベース） |
 | `market_cap` | 時価総額 | `close × shares_outstanding_adjusted` |
 | `psr` | 株価売上高倍率 | `market_cap / sales_ttm`（2026-11-01変更、TTMベース） |
@@ -277,6 +278,39 @@ issue #83）。決算期末日時点の「実際の」株数・「実際に支�
 `eps_adjusted / eps`で求められる。TTM補正前の累積値そのもの（`eps_adjusted`等）は
 このモデルの列として直接公開されている（2026-11-01以降、`per`等からは逆算できない
 点に注意。`per`は`eps_ttm_adjusted`基準）。
+
+### PBRのBPSと決算短信からの推定（2026-11-05追加）
+
+BPS（1株当たり純資産）は有価証券報告書（年次）にしか載らない（EDINETの四半期報告書は
+2024年に廃止、半期報告書にもほぼ無い）。このため、直近の開示が四半期・半期の間は日次の
+`pbr`がNULLになっていた（直近日で全銘柄の約4割）。決算短信には当期末と前期末の純資産が
+載るので、前期末（年次）のBPSに純資産の比を掛けて最新期末のBPSを推定し、`pbr`に使う
+（`intermediate__ir_disclosure__bps_estimates`）。
+
+| 計算式 |
+|---|
+| `bps_estimated = 前期末の年次BPS × 調整比(分割) × (当期末の純資産 ÷ 前期末の純資産)` |
+
+- 純資産の比は同じ決算短信の中の2値なので、純資産の定義（自己資本か純資産合計か）が
+  分子・分母で揃って相殺される。株数は不要（前期末と同じと仮定）。
+- 各日で、その日までに開示された**期末が最も新しい**BPS（EDINETの年次BPS、または決算短信の
+  推定）を使う。決算短信は開示日の翌日から参照できる。`pbr_basis`は`edinet`または
+  `tanshin_estimated`。
+- **安全装置**: 自己株式の取得・増資などの株数の変化は反映できないため、純資産が前期比
+  ±10%を超えて動いた決算短信は推定しない（`estimate_status='ratio_out_of_range'`）。その場合、
+  最新の期末のBPSが無いので、古い年次のBPSを繰り越さず`pbr`はNULLにする（古い純資産で
+  値が歪むため）。純資産が取れない・前期の年次が無い等、データ不足で推定できない決算短信は
+  無視し、従来どおり（その時点の最新のEDINET開示）で判定する。
+- 期末が同じ行が複数ある場合の優先順位: EDINETのBPS > 決算短信の推定 > BPSのないEDINET行
+  > 推定できなかった決算短信。同順位なら開示日が新しいもの（過去の年次をまとめて再提出した
+  銘柄で、古い期末のBPSが使われていた問題も同時に解消）。
+
+**精度**（2026-11-05、Mac Miniの実データ）: J-Quantsの四半期BPS（照合にのみ使用、推定には不使用）
+229件との比較で、安全装置内の209件は絶対誤差の中央値0.20%・5%以内95%・10%以内99%・最大12%
+（第1四半期0.03%・中間0.18%・第3四半期0.81%）。JT(2914)の2026年9月期第3四半期は推定2,321.4円
+・J-Quants 2,321.1円・株探の逆算約2,323円で一致。通期の決算短信55件での検証は中央値0.6%。
+効果: 2026-11-02の`pbr`充足率が57.5% → 65.8%（398銘柄が埋まり、純資産が大きく動いた54銘柄が
+空になる）。`per`・`market_cap`等は変わらない。
 
 ### `per`・`earnings_yield`は「実績EPS」ベース
 
