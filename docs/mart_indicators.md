@@ -1,10 +1,76 @@
-# mart層 指標定義一覧（2026-10-18時点）
+# mart層 指標定義一覧（2026-11-05時点）
 
 mart層の各指標について、どのような計算式・ソースで集計しているかをまとめる。
 実装が変わったらこのドキュメントも合わせて更新すること（正とするのは常に
 `dbt/models/mart/*.sql`・`dbt/models/intermediate/*.sql`本体で、このドキュメントは
 その要約。詳細な根拠・実機確認の経緯は各SQLのコメント、またはJ-Quants比較検証の
 経緯は`docs/jquants_validation.md`を参照）。
+
+## 会計期と指標の参照期間（全体像）
+
+以降の指標定義を読む前提となる図解。図は`docs/img/`のSVG（3月決算・新制度の例）。
+正とするのは各SQL。
+
+### 図1　会計期（`period_type`）と開示が持つ「期間」の長さ
+
+![会計期と開示の構造](img/mart_fiscal_period_structure.svg)
+
+| `period_type` | 提出書類 | 集計期間（フロー項目） | 提出ラグ | 制度 |
+|---|---|---|---|---|
+| `annual` | 有価証券報告書 | 期首〜期末（12か月） | 期末+約87〜90日 | 全期間 |
+| `q1` / `q3` | 四半期報告書 | 期首からの累計（3 / 9か月） | 期末+約43日 | 旧制度のみ（2024-04廃止） |
+| `q2` | 四半期報告書 | 期首からの累計（6か月） | 期末+約43日 | 旧制度のみ |
+| `half` | 半期報告書 | 期首からの累計（6か月） | 期末+約44日 | 新制度（`q2`の後継） |
+
+| 項目の性質 | 開示が持つ値 | 該当する列（`mart__edinet__financial_indicators`） |
+|---|---|---|
+| フロー（期首からの累計値） | `period_type`ごとに1〜12か月分が混在 | `sales` `net_income` `ordinary_income` `eps` `diluted_eps` `comprehensive_income` `operating_cf` `investing_cf` `financing_cf` `dividend_per_share` |
+| ストック（`period_end`時点） | 期の長さに依存しない | `total_assets` `net_assets` `bps` `capital` `cash_and_equivalents` `shares_outstanding` |
+| 比率（開示値そのまま） | 開示書類の自己計算値 | `equity_ratio` `roe` `per` `payout_ratio` |
+
+四半期報告書は「単独四半期」と「期初来累計」が共存しうるため、累計を優先する（特殊処理F1）。
+
+### 図2　TTM（直近12か月）補正
+
+![TTM補正](img/mart_ttm_adjustment.svg)
+
+| 対象 | 式 | 実装 |
+|---|---|---|
+| `eps_ttm` `sales_ttm` `dividend_per_share_ttm` | annual行: 自分自身 / それ以外: ①今回累計 + ②直前通期 − ③1年前の同時点累計 | `mart__jpx_edinet__disclosed_fundamentals` |
+| `bps` `shares_outstanding` | ストック項目のためTTM化しない | 同上 |
+
+詳細（月一致の判定・決算期変更企業の多重マッチ対策）は後述の「TTM(直近12か月)補正」参照。
+
+### 図3　指標ごとの参照期間（`mart__jpx_edinet__daily_valuation_indicators`）
+
+![指標ごとの参照期間](img/mart_indicator_reference_periods.svg)
+
+取引日`t`には、`submit_date_time <= t`を満たす**直近の開示**（図では`half`）を使う。
+
+| 指標 | 株価 | 開示値 | 開示値の参照期間 | 分割・併合調整 |
+|---|---|---|---|---|
+| `per` | `t`の終値 | `eps_ttm` | **TTM 12か月**（最新開示の期末まで） | `adj_ratio`（権利落ち日基準） |
+| `earnings_yield` | `t`の終値 | `eps_ttm` | TTM 12か月 | `adj_ratio` |
+| `psr` | `t`の終値（`market_cap`経由） | `sales_ttm`・`shares_outstanding` | 売上: TTM 12か月 / 株数: 期末時点 | 株数: `shares_adj_ratio`（期末側は効力発生日基準、`t`側は`close`と同じ権利落ち日基準）。売上は不要 |
+| `dividend_yield` | `t`の終値 | `dividend_per_share_ttm` | TTM 12か月 | `shares_adj_ratio` |
+| `pbr` | `t`の終値 | **期末が最も新しいBPS**（EDINET年次のBPS、または決算短信の純資産からの推定BPS。出所は`pbr_basis`） | **期末時点**（TTM化しない）。直近の開示が半期・四半期でも、決算短信があれば最新期末の推定BPSを使う | BPS自身の`period_end`の係数 ÷ `t`の係数（`adj_ratio`と同じ権利落ち日基準） |
+| `market_cap` | `t`の終値 | `shares_outstanding` | 期末時点（調整係数を`period_end`で取得するため期末扱い） | `shares_adj_ratio` |
+| `eps_adjusted` / `dividend_per_share_adjusted` | - | `eps` / `dividend_per_share` | 期首からの**累計**（TTM補正前） | `adj_ratio` / `shares_adj_ratio` |
+
+`pbr`だけは、上記の「直近の開示」ではなく、BPSの時系列から**期末が最も新しい行**を選ぶ（EDINETの半期・四半期にはBPSがほぼ無いため）。決算短信の純資産が前期比±10%超動いた銘柄は推定せず、古い年次のBPSを繰り越さず`pbr`をNULLにする。詳細は後述の「PBRのBPSと決算短信からの推定」参照（図3のSVGは`pbr`を直近の開示の`bps`として描いており、この経路は反映していない）。
+
+調整係数は「開示の`period_end`時点」と「`t`時点」の比。分子（株価）は常に`t`、分母（開示値）は
+`period_end`までの期間のため、**両者の時間差がそのまま分割調整の対象期間**になる（図の赤線）。
+
+### 他のmartとの対応
+
+| mart | 期の扱い |
+|---|---|
+| `mart__edinet__financial_indicators` | 図1のとおり開示1件=1行。TTM補正なし（開示値そのまま） |
+| `mart__jpx_edinet__disclosed_fundamentals` | 図1の行に図2のTTM列を付与 |
+| `mart__jpx_edinet__daily_valuation_indicators` | 図3。開示を`t`ごとにASOF JOIN |
+| `mart__jpx_edinet__quarterly_fundamentals` | EDINET + 決算短信（`q1`/`q2_half`/`q3`/`annual`）のUNION ALL。TTM補正なし。一意化は`is_preferred_actuals` |
+| `mart__edinet__reit_*` / `etf_*` | fiscal_year・`period_type`の概念なし。grainは`period_end`（決算期末） |
 
 ## mart__edinet__financial_indicators
 
