@@ -29,6 +29,21 @@
 -- 実際の最小file_dateを動的に参照することで、将来stq_pricesの遡及範囲が変わっても
 -- 自動的に追従する）。
 --
+-- J-Quantsによる補完(finance-dwh Issue #99、2026-11-07): 東証日報は当日分が翌営業日以降に
+-- ならないと出ないため、stq_pricesだけではmartが常に前日分までで止まる。J-Quants
+-- (cleansed__jquants__daily_quotes、前日終値を取得できる)を、stq_pricesに無い
+-- (銘柄, 日付)に限って補完する。実測(2026-10-22〜11-05、同日・同銘柄44,375件)で
+-- 終値の不一致は0件だった(差は両方NULL=取引なしの行のみ)。
+--   - 優先順位: 重複する(銘柄, 日付)は常にstq_prices。日報が後から追いつけば自動で
+--     日報の値になる(値は一致するため遡って変わらない)。
+--   - 範囲: stq_pricesの最小file_date以降。日報が欠けた日(例: 2026-07-16〜31)も、
+--     J-Quantsにあれば補われる。それより前はdaily_ohlcの領域。
+--   - コード: J-Quantsは5桁(末尾0が普通株式)。stq_prices/daily_ohlcと同じく
+--     末尾0の行だけを対象にsubstr(code,1,4)で4桁へ揃える。
+--   - 値: 調整前のO/H/L/C(AdjO等は使わない。分割調整は下流のprices_adjustedが
+--     行う)。前場/後場の区別が無いため後場列(pm_*)に入れる(martは
+--     coalesce(pm_close, am_close)を使う)。am_*・vwap・名称・市場区分等はNULL。
+--
 -- 列構成: stq_pricesの全列を採用し、daily_ohlc期間（列が存在しない項目）はNULL
 -- 埋めとする（列を共通部分に絞ると情報量が減るため、stq_prices優先で保持する方針。
 -- 2026-09-25、ユーザー判断）。
@@ -96,8 +111,49 @@ daily_ohlc as (
     where length(d.code) = 5
       and right(d.code, 1) = '0'
       and d.file_date < m.min_date
+),
+
+jquants_fill as (
+    select
+        q.file_date,
+        substr(q.code, 1, 4) as code,
+        cast(null as integer) as trading_unit,
+        cast(null as varchar) as name_ja,
+        cast(null as varchar) as name_en,
+        cast(null as varchar) as market_segment,
+        cast(null as varchar) as market_segment_code,
+        cast(null as varchar) as industry_sector_ja,
+        cast(null as varchar) as industry_sector_en,
+        cast(null as varchar) as industry_code_33,
+        cast(null as varchar) as industry_code_17,
+        cast(null as varchar) as security_category_ja,
+        cast(null as decimal(18, 4)) as am_open,
+        cast(null as decimal(18, 4)) as am_high,
+        cast(null as decimal(18, 4)) as am_low,
+        cast(null as decimal(18, 4)) as am_close,
+        q.open_price as pm_open,
+        q.high_price as pm_high,
+        q.low_price as pm_low,
+        q.close_price as pm_close,
+        cast(null as decimal(18, 4)) as final_special_quote,
+        cast(null as decimal(18, 4)) as net_change,
+        cast(null as decimal(18, 4)) as vwap,
+        q.volume as trading_volume,
+        q.trading_value as trading_value,
+        'jquants_daily_quotes' as source_model
+    from {{ ref('cleansed__jquants__daily_quotes') }} q
+    cross join stq_prices_min_date m
+    where length(q.code) = 5
+      and right(q.code, 1) = '0'
+      and q.file_date >= m.min_date
+      and not exists (
+          select 1 from stq_prices s
+          where s.code = substr(q.code, 1, 4) and s.file_date = q.file_date
+      )
 )
 
 select * from stq_prices
 union all
 select * from daily_ohlc
+union all
+select * from jquants_fill
