@@ -200,7 +200,8 @@ GitHub上のdefault branchは`main`のまま変更していない。PRのbaseは
 
 Python 3.12。外部依存は `transform/` のみ: `dbt-core` / `dbt-duckdb` / `duckdb` /
 `pyarrow` / `prefect` / `boto3` / `pdfplumber`（JPX PDF のテキスト化、`py.typed`
-同梱のため追加 stub 不要）/ `beautifulsoup4`（mufg-corporate-actionsのHTMLテーブル
+同梱のため追加 stub 不要）/ `pymupdf`（決算短信 PDF のテキスト化、2026-11-08追加。AGPL、
+依存を引き込まない1.26系にピン留め、`py.typed`なしのため`# type: ignore[import-untyped]`）/ `beautifulsoup4`（mufg-corporate-actionsのHTMLテーブル
 解析、2026-09-16追加。標準ライブラリのみでの実装は現実的でないための例外。
 lxml等のC拡張依存は増やさず`html.parser`バックエンドのみ使用）。開発は
 `requirements-dev.txt`（+ `mypy` / `pytest` / `boto3-stubs` / `pyarrow-stubs`）。
