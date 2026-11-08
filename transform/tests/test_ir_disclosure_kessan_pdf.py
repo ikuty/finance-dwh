@@ -82,3 +82,48 @@ def test_extract_text_empty_page_yields_empty_string(tmp_path: Path) -> None:
     pdf_path = tmp_path / "test.pdf"
     write_pdf(pdf_path, [[]])
     assert m.extract_text(pdf_path) == ""
+
+
+# --- normalize_pymupdf_text(PyMuPDFの空白の入り方をStage2の前提に揃える) ----------------
+# 実データ(ステージングの2,819件、pdfplumberとの突き合わせ)で見つかった差の再現。
+# 実PDFは著作物のためコミットできないので、PyMuPDFが実際に出した行をそのまま使う。
+
+
+def test_normalize_removes_space_inside_period_label() -> None:
+    # 数字と「年月日期四半第」の間の空白(PyMuPDFが字間を空けて出力する)
+    text = "2024 年12 月期第1 四半期 999 △5.3"
+    assert m.normalize_pymupdf_text(text) == "2024年12月期第1四半期 999 △5.3"
+
+
+def test_normalize_inserts_space_between_period_label_and_number() -> None:
+    # ラベルと最初の数値が近く、PyMuPDFは空白を出さない(pdfplumberは出す)
+    text = "2024年６月期第３四半期105,570  4.5   4,501 20.0"
+    assert m.normalize_pymupdf_text(text) == "2024年６月期第３四半期 105,570 4.5 4,501 20.0"
+
+
+def test_normalize_inserts_space_between_dash_and_triangle() -> None:
+    # 「－△1,827」のままだとトークンが数値にならず、負数がNULLになる
+    text = "2024年11月期中間期 19,864 41.0 1,072  －△1,827  －△2,145  －"
+    assert m.normalize_pymupdf_text(text) == "2024年11月期中間期 19,864 41.0 1,072 － △1,827 － △2,145 －"
+
+
+def test_normalize_collapses_spaces_and_drops_blank_lines() -> None:
+    text = "  上場会社名　セーラー万年筆株式会社   上場取引所  東\n\n\n   コード番号  7992\n"
+    assert m.normalize_pymupdf_text(text) == "上場会社名 セーラー万年筆株式会社 上場取引所 東\nコード番号 7992"
+
+
+def test_normalize_keeps_spaces_between_numbers_and_units() -> None:
+    # 数値同士の区切りや「百万円 ％」の並びは、期ラベル内ではないので変えない
+    text = "百万円 ％ 百万円 ％\n2025年3月期 6,088 30.5 2,456 △13.9"
+    assert m.normalize_pymupdf_text(text) == "百万円 ％ 百万円 ％\n2025年3月期 6,088 30.5 2,456 △13.9"
+
+
+def test_normalized_period_row_is_recognized_by_stage2() -> None:
+    # 実PDFで主要列が全NULLになっていた行(PyMuPDFの出力そのまま)が、正規化後は
+    # Stage2の期ラベル行として数値を取り出せること(△は負数になる)
+    import ir_disclosure_kessan_facts as facts_stage
+
+    raw = "2024 年12 月期第1 四半期        999     △5.3     △136    －      △134   －      △138    －"
+    lines = m.normalize_pymupdf_text(raw).splitlines()
+    rows = facts_stage._find_period_rows(lines, 0, len(lines))
+    assert rows == [("2024年12月期第1四半期", ["999", "-5.3", "-136", None, "-134", None, "-138", None])]

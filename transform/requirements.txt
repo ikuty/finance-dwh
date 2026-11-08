@@ -5,6 +5,9 @@ boto3~=1.43
 duckdb~=1.5
 pyarrow~=25.0
 pdfplumber~=0.11
+# 決算短信PDFのテキスト化(ir_disclosure_kessan_pdf.py)用。AGPL。2.x系はonnxruntime・numpy等を
+# 引き込むため、依存のない1.26系にピン留めする(2026-11-08、finance-dwh Issue #94)。
+pymupdf>=1.26,<1.27
 # mufg_corporate_actions.py のHTMLテーブル解析用。標準ライブラリのみでの実装は
 # 現実的でないため、boto3・pdfplumberに続く例外的な追加(2026-09-16)。
 # lxml等のC拡張は増やさず、標準ライブラリのhtml.parserバックエンドのみで使う。
