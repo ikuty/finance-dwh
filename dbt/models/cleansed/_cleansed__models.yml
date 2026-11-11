@@ -434,6 +434,38 @@ models:
           2026-10-03追加）。四半期決算短信(q1/q2_half/q3)は今期進行中の通期を指すが、
           本決算(annual)は次期の通期を指す（実機確認: クラウディアHD「2026年8月期」
           本体の予想セクションは「2027年8月期の連結業績予想」）。
+      # 配当表(2026-11-12追加、#108)。「－」は0(無配)、表に無い(空欄)スロットと
+      # 解釈できない行はNULL。前期行はQ1〜期末の合計と合計列が一致する(98.1%)。
+      - name: dividend_prior_q1
+        description: "配当表の前期実績の行の第1四半期末の1株当たり配当金(円)。"
+      - name: dividend_prior_q2
+        description: "配当表の前期実績の行の第2四半期末の1株当たり配当金(円)。"
+      - name: dividend_prior_q3
+        description: "配当表の前期実績の行の第3四半期末の1株当たり配当金(円)。"
+      - name: dividend_prior_q4
+        description: "配当表の前期実績の行の期末の1株当たり配当金(円)。"
+      - name: dividend_prior_total
+        description: "配当表の前期実績の行の年間合計の1株当たり配当金(円)。"
+      - name: dividend_cur_q1
+        description: "配当表の当期実績の行(決算短信の時点までに経過したスロットのみ)の第1四半期末の1株当たり配当金(円)。"
+      - name: dividend_cur_q2
+        description: "配当表の当期実績の行(決算短信の時点までに経過したスロットのみ)の第2四半期末の1株当たり配当金(円)。"
+      - name: dividend_cur_q3
+        description: "配当表の当期実績の行(決算短信の時点までに経過したスロットのみ)の第3四半期末の1株当たり配当金(円)。"
+      - name: dividend_cur_q4
+        description: "配当表の当期実績の行(決算短信の時点までに経過したスロットのみ)の期末の1株当たり配当金(円)。"
+      - name: dividend_cur_total
+        description: "配当表の当期実績の行(決算短信の時点までに経過したスロットのみ)の年間合計の1株当たり配当金(円)。"
+      - name: dividend_fcst_q1
+        description: "配当表の予想の行(未経過のスロットのみ。通期は5スロット)の第1四半期末の1株当たり配当金(円)。"
+      - name: dividend_fcst_q2
+        description: "配当表の予想の行(未経過のスロットのみ。通期は5スロット)の第2四半期末の1株当たり配当金(円)。"
+      - name: dividend_fcst_q3
+        description: "配当表の予想の行(未経過のスロットのみ。通期は5スロット)の第3四半期末の1株当たり配当金(円)。"
+      - name: dividend_fcst_q4
+        description: "配当表の予想の行(未経過のスロットのみ。通期は5スロット)の期末の1株当たり配当金(円)。"
+      - name: dividend_fcst_total
+        description: "配当表の予想の行(未経過のスロットのみ。通期は5スロット)の年間合計の1株当たり配当金(円)。"
       - name: _loaded_at
         description: "DWH取り込み時刻(UTC)。"
 
