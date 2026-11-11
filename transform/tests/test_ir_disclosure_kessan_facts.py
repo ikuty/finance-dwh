@@ -505,3 +505,199 @@ def test_run_correction_returns_empty_row_without_parsing() -> None:
     assert row.period_end is None
     assert row.sales is None
     assert row.forecast_eps is None
+
+
+# --- 配当表(#108) ---------------------------------------------------------------
+# 実機確認(2026-11-12)のレイアウトに基づく。空欄セルは行から消え、「－」は残る。
+
+
+def _div(text: str, period_type: str) -> dict[str, str | None]:
+    return m.parse_dividend_table(text.strip().split("\n"), period_type)
+
+
+def test_parse_dividend_table_q1_current_has_one_slot_and_forecast_right_aligned() -> None:
+    out = _div(
+        """
+２．配当の状況
+年間配当金
+第１四半期末 第２四半期末 第３四半期末 期末 合計
+円 銭 円 銭 円 銭 円 銭 円 銭
+2026年５月期 － 38.00 － 39.00 77.00
+2027年５月期 －
+2027年５月期（予想） 42.00 － 42.00 84.00
+（注）直近に公表されている配当予想からの修正の有無：無
+３．2027年５月期の連結業績予想
+""",
+        "q1",
+    )
+    assert [out[f"dividend_prior_{s}"] for s in ("q1", "q2", "q3", "q4", "total")] == [
+        "0", "38.00", "0", "39.00", "77.00",
+    ]
+    assert out["dividend_cur_q1"] == "0"
+    assert "dividend_cur_q2" not in out
+    # 予想はQ1が空欄(行から消える)ので右詰めでQ2〜合計に割り当てる
+    assert "dividend_fcst_q1" not in out
+    assert [out[f"dividend_fcst_{s}"] for s in ("q2", "q3", "q4", "total")] == [
+        "42.00", "0", "42.00", "84.00",
+    ]
+
+
+def test_parse_dividend_table_annual_ignores_trailing_total_amount_and_payout_columns() -> None:
+    out = _div(
+        """
+２．配当の状況
+年間配当金 配当金総額 配当性向 純資産配当率
+第１四半期末 第２四半期末 第３四半期末 期末 合計 (合計) （連結） （連結）
+円 銭 円 銭 円 銭 円 銭 円 銭 百万円 ％ ％
+2025年8月期 － 5.00 － 5.00 10.00 90 28.8 2.3
+2026年8月期 － 5.00 － 7.00 12.00 108 25.6 2.6
+2027年8月期（予想） － 5.00 － 5.00 10.00 16.5
+３．2027年8月期の連結業績予想
+""",
+        "annual",
+    )
+    assert out["dividend_prior_total"] == "10.00"
+    assert out["dividend_cur_q4"] == "7.00"
+    assert out["dividend_cur_total"] == "12.00"
+    assert [out[f"dividend_fcst_{s}"] for s in ("q1", "q2", "q3", "q4", "total")] == [
+        "0", "5.00", "0", "5.00", "10.00",
+    ]
+
+
+def test_parse_dividend_table_q3_current_has_three_slots_and_forecast_two() -> None:
+    out = _div(
+        """
+2.配当の状況
+年間配当金
+第1四半期末 第2四半期末 第3四半期末 期末 合計
+円 銭 円 銭 円 銭 円 銭 円 銭
+2025年10月期 － 23.00 － 23.00 46.00
+2026年10月期 － 53.50 －
+2026年10月期（予想） 26.50 80.00
+3.2026年10月期の連結業績予想
+""",
+        "q3",
+    )
+    assert [out[f"dividend_cur_{s}"] for s in ("q1", "q2", "q3")] == ["0", "53.50", "0"]
+    assert "dividend_cur_q4" not in out
+    assert out["dividend_fcst_q4"] == "26.50"
+    assert out["dividend_fcst_total"] == "80.00"
+    assert "dividend_fcst_q3" not in out
+
+
+def test_parse_dividend_table_full_five_slot_forecast_on_quarterly_filing() -> None:
+    # IFRSのQ1の例: 予想行にQ1の「－」まで載り5個そろう
+    out = _div(
+        """
+２．配当の状況
+年間配当金
+第１四半期末 第２四半期末 第３四半期末 期末 合計
+2026年４月期 － － － 20.00 20.00
+2027年４月期 －
+2027年４月期（予想） － 20.00 － 20.00 40.00
+３．2027年４月期の連結業績予想
+""",
+        "q1",
+    )
+    assert out["dividend_fcst_q1"] == "0"
+    assert out["dividend_fcst_total"] == "40.00"
+    assert out["dividend_prior_q2"] == "0"
+
+
+def test_parse_dividend_table_heading_variants() -> None:
+    for heading in ("２ 配当の状況", "２．配当", "３．配当の状況", "4. 配当の状況"):
+        out = _div(
+            f"""
+{heading}
+2025年３月期 － 10.00 － 10.00 20.00
+2026年３月期 － 12.00 － 12.00 24.00
+5．その他
+""",
+            "annual",
+        )
+        assert out["dividend_prior_total"] == "20.00", heading
+        assert out["dividend_cur_total"] == "24.00", heading
+
+
+def test_parse_dividend_table_skips_table_of_contents_line_and_uses_real_section() -> None:
+    out = _div(
+        """
+２．配当の状況 ………………………………………… 3
+２ 配当の状況
+2025年３月期 － 10.00 － 10.00 20.00
+2026年３月期 － 12.00 － 12.00 24.00
+""",
+        "annual",
+    )
+    assert out["dividend_cur_total"] == "24.00"
+
+
+def test_parse_dividend_table_ignores_notes_and_breakdown_lines() -> None:
+    out = _div(
+        """
+２．配当の状況
+2025年８月期 － 5.00 － 5.00 10.00
+2026年８月期 － 5.00 － 7.00 12.00
+2027年８月期（予
+想）の１株当たり期末配当金につきましては当該株式分割の影響を考慮した金額を記載し、１株当
+2026年８月期期末配当の内訳 普通配当80円00銭
+３．業績予想
+""",
+        "annual",
+    )
+    assert out["dividend_cur_total"] == "12.00"
+    assert not any(k.startswith("dividend_fcst_") for k in out)
+
+
+def test_parse_dividend_table_leaves_all_null_when_row_count_is_not_two_actual_rows() -> None:
+    # 種類株などで実績行が3行以上ある会社は、どの行がどれか判定できないのでNULL
+    out = _div(
+        """
+２．配当の状況
+2025年３月期 － 10.00 － 10.00 20.00
+2025年３月期 － 5.00 － 5.00 10.00
+2026年３月期 － 12.00 － 12.00 24.00
+""",
+        "annual",
+    )
+    assert out == {}
+
+
+def test_parse_dividend_table_without_section_returns_empty() -> None:
+    assert _div("１．経営成績\n売上高 100", "annual") == {}
+
+
+def test_parse_dividend_table_prior_row_total_matches_sum_of_slots() -> None:
+    out = _div(
+        """
+２．配当の状況
+2025年12月期 12.20 7.50 10.20 14.20 44.10
+2026年12月期 5.00
+""",
+        "q1",
+    )
+    prior = [float(out[f"dividend_prior_{s}"] or 0) for s in ("q1", "q2", "q3", "q4")]
+    assert abs(sum(prior) - float(out["dividend_prior_total"] or 0)) < 0.011
+
+
+def test_run_extracts_dividend_columns() -> None:
+    text = """
+１．2027年５月期第１四半期の連結業績
+2027年５月期第１四半期 6,334 5.5 585 0.5 600 0.4 400 0.3
+２．配当の状況
+年間配当金
+2026年５月期 － 38.00 － 39.00 77.00
+2027年５月期 －
+2027年５月期（予想） 42.00 － 42.00 84.00
+３．2027年５月期の連結業績予想
+"""
+    row = m.run(text, "d1", "2027年５月期第１四半期決算短信〔日本基準〕(連結)")
+    assert row.dividend_prior_total == "77.00"
+    assert row.dividend_cur_q1 == "0"
+    assert row.dividend_fcst_total == "84.00"
+    assert row.dividend_fcst_q1 is None
+
+
+def test_run_without_dividend_table_leaves_dividend_fields_none() -> None:
+    row = m.run("１．経営成績\n", "d2", "2027年５月期決算短信〔日本基準〕(連結)")
+    assert all(getattr(row, c) is None for c in m.FACT_COLUMNS if c.startswith("dividend_"))
