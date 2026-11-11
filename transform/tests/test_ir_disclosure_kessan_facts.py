@@ -701,3 +701,35 @@ def test_run_extracts_dividend_columns() -> None:
 def test_run_without_dividend_table_leaves_dividend_fields_none() -> None:
     row = m.run("１．経営成績\n", "d2", "2027年５月期決算短信〔日本基準〕(連結)")
     assert all(getattr(row, c) is None for c in m.FACT_COLUMNS if c.startswith("dividend_"))
+
+
+# --- 「年度」表記の会社(日本電信電話等、#108) -----------------------------------------
+
+
+def test_parse_period_end_from_text_reads_end_date_of_range_in_heading() -> None:
+    lines = ["2024年度 決算短信", "１．2024年度の連結業績（2024年４月１日～2025年３月31日）"]
+    assert m.parse_period_end_from_text(lines) == "2025-03-31"
+    assert m.parse_period_end_from_text(["1．2025年度第2四半期の連結業績（2025年4月1日～2025年9月30日）"]) == "2025-09-30"
+    assert m.parse_period_end_from_text(["１．連結業績（2025年2月1日～2025年2月30日）"]) is None
+    assert m.parse_period_end_from_text(["経営成績"]) is None
+
+
+def test_run_handles_nendo_labels_for_dividend_and_period_end() -> None:
+    text = """
+１．2024年度の連結業績（2024年４月１日～2025年３月31日）
+2024年度 13,720,000 2.6 1,800,000 3.0
+２．配当の状況
+年間配当金
+第１四半期末 第２四半期末 第３四半期末 期末 合計
+2023年度 － 2.50 － 2.50 5.00
+2024年度 － 2.60 － 2.60 5.20
+2025年度（予想） － 2.75 － 2.75 5.50
+３．2025年度の連結業績予想
+"""
+    row = m.run(text, "n1", "2024年度 決算短信〔IFRS〕（連結）")
+    assert row.period_end == "2025-03-31"
+    assert row.period_type == "annual"
+    assert row.dividend_prior_total == "5.00"
+    assert row.dividend_cur_q4 == "2.60"
+    assert row.dividend_cur_total == "5.20"
+    assert row.dividend_fcst_total == "5.50"

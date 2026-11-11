@@ -7,7 +7,8 @@
 タイトル・edinet_code・sec_codeはレイクのメタデータJSON({yyyy}/{mm}/{dd}/*/{docid}.json)
 から取る(load_ir_disclosure_kessan.load_oneと同じ値)。
 
-- 既に配当列を持つパーティションは何もしない(再実行しても安全)。
+- 既に配当列を持つパーティションは何もしない(再実行しても安全)。抽出器を直した後に
+  全パーティションを作り直すときだけ --force を付ける。
 - 対応するメタデータJSONが無いdocidは、既存の行をそのまま残し、配当列だけNULLを足す。
 - 配当列以外の列が再抽出の結果で変わった文書は、件数と列名を報告する(見出し判定の
   変更で他の項目が変わっていないかの確認用)。--dry-runなら書かずに報告だけ行う。
@@ -80,7 +81,9 @@ def _load_meta(lake_root: Path, date: str) -> dict[str, dict[str, str]]:
     return out
 
 
-def reextract_date(landing_root: Path, lake_root: Path, date: str, dry_run: bool = False) -> Counter[str]:
+def reextract_date(
+    landing_root: Path, lake_root: Path, date: str, dry_run: bool = False, force: bool = False
+) -> Counter[str]:
     """1日ぶんを再抽出する。統計(docs/skipped/no_meta/changed_docs/changed:<列名>)を返す。"""
     stats: Counter[str] = Counter()
     facts_dir = landing_root / "ir_disclosure_kessan_facts" / f"file_date={date}"
@@ -88,7 +91,7 @@ def reextract_date(landing_root: Path, lake_root: Path, date: str, dry_run: bool
     facts_path = facts_dir / "part.parquet"
 
     old_rows = _read_parquet(facts_path)
-    if old_rows and all(c in old_rows[0] for c in DIVIDEND_COLUMNS):
+    if not force and old_rows and all(c in old_rows[0] for c in DIVIDEND_COLUMNS):
         stats["skipped_dates"] += 1
         return stats
     if not text_path.exists() or text_path.stat().st_size == 0:
@@ -115,7 +118,9 @@ def reextract_date(landing_root: Path, lake_root: Path, date: str, dry_run: bool
         row["_loaded_at"] = old.get("_loaded_at")
         new_rows.append(row)
         stats["docs"] += 1
-        changed = [c for c in row if c not in _NON_COMPARED and row[c] != old.get(c)]
+        # --force時は配当列も比較対象(抽出器の修正で変わった行を報告する)
+        skip = {"_loaded_at", "file_date"} if force else _NON_COMPARED
+        changed = [c for c in row if c not in skip and row[c] != old.get(c)]
         if changed:
             stats["changed_docs"] += 1
             for c in changed:
@@ -144,6 +149,7 @@ def landing_dates(landing_root: Path) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dry-run", action="store_true", help="書き込まず、変更の統計だけ報告する")
+    ap.add_argument("--force", action="store_true", help="配当列を持つパーティションも作り直す")
     ap.add_argument("--from-date", help="この日付以降だけ処理する(YYYY-MM-DD)")
     ap.add_argument("--to-date", help="この日付以前だけ処理する(YYYY-MM-DD)")
     args = ap.parse_args(argv)
@@ -156,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     total: Counter[str] = Counter()
     started = datetime.datetime.now()
     for i, date in enumerate(dates, 1):
-        total += reextract_date(landing_root, lake_root, date, dry_run=args.dry_run)
+        total += reextract_date(landing_root, lake_root, date, dry_run=args.dry_run, force=args.force)
         if i % 100 == 0:
             print(f"  {i}/{len(dates)} 日処理 ({datetime.datetime.now() - started})", flush=True)
     print(f"対象 {len(dates)} 日 dry_run={args.dry_run}")

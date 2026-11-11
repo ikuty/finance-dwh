@@ -111,3 +111,16 @@ def test_reextract_reports_changed_non_dividend_columns(tmp_path: Path) -> None:
     _write(path, data)
     stats = m.reextract_date(landing, lake, DATE)
     assert stats["changed_docs"] == 1 and stats["changed:sales"] == 1
+
+
+def test_reextract_force_rewrites_partitions_that_already_have_dividend_columns(tmp_path: Path) -> None:
+    landing, lake = _setup(tmp_path, ["d1"], ["d1"])
+    m.reextract_date(landing, lake, DATE)
+    path = landing / "ir_disclosure_kessan_facts" / f"file_date={DATE}" / "part.parquet"
+    rows = _read(landing)
+    rows[0]["dividend_prior_total"] = "1.00"  # 古い抽出器の誤った値
+    _write(path, {c: [rows[0][c]] for c in rows[0]})
+    assert m.reextract_date(landing, lake, DATE)["skipped_dates"] == 1
+    stats = m.reextract_date(landing, lake, DATE, force=True)
+    assert stats["changed:dividend_prior_total"] == 1 and stats["written_dates"] == 1
+    assert _read(landing)[0]["dividend_prior_total"] == "77.00"

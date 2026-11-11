@@ -114,6 +114,29 @@ def compute_period_end(fye_year: int, fye_month: int, period_type: str | None) -
     return f"{year:04d}-{month:02d}-{last_day:02d}"
 
 
+# タイトルに「2024年度」とだけあり決算月が分からない会社(日本電信電話等、53件、
+# 実機確認2026-11-12)の期間末日は、本文の「１．…の連結業績（2024年4月1日～2025年3月31日）」
+# 見出しの終了日から取る。
+_FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+_RANGE_END_RE = re.compile(r"[～~〜]\s*(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日")
+
+
+def parse_period_end_from_text(lines: list[str]) -> str | None:
+    """本文冒頭の「１．…（YYYY年M月D日～YYYY年M月D日）」見出しの終了日(ISO形式)を返す。"""
+    for line in lines[:80]:
+        s = line.strip().translate(_FULLWIDTH_DIGITS)
+        if not re.match(r"^1[．.]", s):
+            continue
+        m = _RANGE_END_RE.search(s)
+        if not m:
+            continue
+        year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if not 1 <= month <= 12 or not 1 <= day <= calendar.monthrange(year, month)[1]:
+            return None
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    return None
+
+
 def parse_consolidation(title: str) -> str | None:
     if "非連結" in title:
         return "non_consolidated"
@@ -153,12 +176,14 @@ def _normalize_number(token: str) -> str | None:
 
 # --- データ行の抽出 ------------------------------------------------------------
 
+# 「2024年度」「2025年度（予想）」のように「期」でなく「度」で終わるラベルの会社もある
+# (日本電信電話、実機確認2026-11-12)。
 # 「2027年５月期第１四半期 6,334 5.5 585 0.5 ...」「2027年8月期（予想） － 5.00 ...」
 # 「令和８年７月期 ...」のような、期ラベル+数値トークン列からなる行。元号年のデータ行は
 # タイトルで「令和」を示した後、本文では「令和」を省略し「８年10月期...」のように
 # 1〜2桁の年数字だけで始まることを実機確認済み(2026-09-30、株式会社キタック)。
 _PERIOD_ROW_RE = re.compile(
-    r"^(?P<label>\d{1,4}年\S*?期(?:\s*[（(]予想[）)])?)\s+"
+    r"^(?P<label>\d{1,4}年\S*?[期度](?:\s*[（(]予想[）)])?)\s+"
     r"(?P<rest>[△▲▼0-9,.\s％\-－―ー]+)$"
 )
 
@@ -451,6 +476,8 @@ def run(
     accounting_standard = parse_accounting_standard(title) or "jgaap"
     fye = parse_fiscal_year_end(title)
     period_end = compute_period_end(fye[0], fye[1], period_type) if fye else None
+    if period_end is None:
+        period_end = parse_period_end_from_text(lines)
     # forecast_epsが指す対象期間(forecast_period_end)は、当該開示自身の期間
     # (period_end)とは異なる(2026-10-03にmart設計で判明、実データで検証済み)。
     # 四半期決算短信(q1/q2_half/q3)の「３．業績予想」は今期進行中の通期予想
