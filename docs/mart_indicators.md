@@ -54,10 +54,13 @@ mart層の各指標について、どのような計算式・ソースで集計�
 | `per` | `t`の終値 | `eps_ttm` | **TTM 12か月**（最新開示の期末まで） | `adj_ratio`（権利落ち日基準） |
 | `earnings_yield` | `t`の終値 | `eps_ttm` | TTM 12か月 | `adj_ratio` |
 | `psr` | `t`の終値（`market_cap`経由） | `sales_ttm`・`shares_outstanding` | 売上: TTM 12か月 / 株数: 期末時点 | 株数: `shares_adj_ratio`（期末側は効力発生日基準、`t`側は`close`と同じ権利落ち日基準）。売上は不要 |
-| `dividend_yield` | `t`の終値 | `dividend_per_share_ttm` | TTM 12か月 | `shares_adj_ratio` |
+| `dividend_yield` | `t`の終値 | **期末が最も新しい直近12か月配当**（EDINETのTTM配当、または決算短信の配当表から算出。出所は`dividend_basis`） | TTM 12か月 | 配当自身の`period_end`の係数（効力発生日基準） ÷ `t`の係数（権利落ち日基準） |
+| `forecast_dividend_yield` | `t`の終値 | 直近の決算短信の**予想年間配当** | 予想（当期、通期決算短信は次期） | 開示日時点の係数（効力発生日基準） ÷ `t`の係数 |
 | `pbr` | `t`の終値 | **期末が最も新しいBPS**（EDINET年次のBPS、または決算短信の純資産からの推定BPS。出所は`pbr_basis`） | **期末時点**（TTM化しない）。直近の開示が半期・四半期でも、決算短信があれば最新期末の推定BPSを使う | BPS自身の`period_end`の係数 ÷ `t`の係数（`adj_ratio`と同じ権利落ち日基準） |
 | `market_cap` | `t`の終値 | `shares_outstanding` | 期末時点（調整係数を`period_end`で取得するため期末扱い） | `shares_adj_ratio` |
 | `eps_adjusted` / `dividend_per_share_adjusted` | - | `eps` / `dividend_per_share` | 期首からの**累計**（TTM補正前） | `adj_ratio` / `shares_adj_ratio` |
+
+`dividend_yield`も、上記の「直近の開示」ではなく、配当の時系列から**期末が最も新しい行**を選ぶ（EDINETの半期報告書には1株配当が載らないため）。詳細は後述の「配当の時系列と決算短信からの算出」参照。
 
 `pbr`だけは、上記の「直近の開示」ではなく、BPSの時系列から**期末が最も新しい行**を選ぶ（EDINETの半期・四半期にはBPSがほぼ無いため）。決算短信の純資産が前期比±10%超動いた銘柄は推定せず、古い年次のBPSを繰り越さず`pbr`をNULLにする。詳細は後述の「PBRのBPSと決算短信からの推定」参照（図3のSVGは`pbr`を直近の開示の`bps`として描いており、この経路は反映していない）。
 
@@ -316,7 +319,7 @@ issue #83）。決算期末日時点の「実際の」株数・「実際に支�
 | `shares_adj_ratio` | 株数・配当用の調整比率 | 上表参照 |
 | `shares_outstanding_adjusted` | 調整後発行済株式数 | `shares_outstanding ÷ shares_adj_ratio` |
 | `eps_ttm_adjusted` | TTM補正後・調整後EPS | `eps_ttm × adj_ratio` |
-| `dividend_per_share_ttm_adjusted` | TTM補正後・調整後1株配当 | `dividend_per_share_ttm × shares_adj_ratio` |
+| `dividend_per_share_ttm_adjusted` | TTM補正後・調整後1株配当（出所は`dividend_basis`） | `直近12か月配当 × (配当の期末側の係数 ÷ 取引日の係数)` |
 | `pbr` | 株価純資産倍率 | `close / bps_adjusted`（`bps`はTTM対象外。BPSの出所は`pbr_basis`、下記「PBRのBPSと決算短信からの推定」参照） |
 | `pbr_basis` / `pbr_bps_period_end` | PBRのBPSの出所（`edinet`または`tanshin_estimated`）とその期末日 | `pbr`がNULLの行はNULL |
 | `per` | 実勢PER | `close / eps_ttm_adjusted`（2026-11-01変更、TTMベース） |
@@ -324,7 +327,10 @@ issue #83）。決算期末日時点の「実際の」株数・「実際に支�
 | `psr` | 株価売上高倍率 | `market_cap / sales_ttm`（2026-11-01変更、TTMベース） |
 | `earnings_yield` | 株式益回り | `eps_ttm_adjusted / close`（2026-11-01変更、TTMベース） |
 | `dividend_per_share_adjusted` | 調整後1株当たり配当額（累積値そのまま、TTM補正前） | `dividend_per_share × shares_adj_ratio` |
-| `dividend_yield` | 配当利回り | `dividend_per_share_ttm_adjusted / close`（2026-11-01変更、TTMベース） |
+| `dividend_yield` | 配当利回り（実績） | `dividend_per_share_ttm_adjusted / close`（2026-11-01変更、TTMベース。2026-11-12から決算短信由来の配当を含む） |
+| `dividend_basis` / `dividend_ttm_period_end` | 配当の出所（`edinet`または`tanshin`）とその期末日 | `dividend_yield`がNULLの行はNULL |
+| `forecast_dividend_per_share_adjusted` / `forecast_dividend_yield` | 予想配当（調整後）と予想配当利回り | `予想年間配当 × (開示日の係数 ÷ 取引日の係数)` / `÷ close` |
+| `forecast_dividend_period_end` | 予想配当の対象期間の期末日 | 年度表記の会社はNULLのことがある |
 
 分母が0またはNULLの場合は該当指標もNULLになる。`per`/`psr`/`dividend_yield`/
 `earnings_yield`のTTM補正の詳細は`mart__jpx_edinet__disclosed_fundamentals`の
@@ -346,6 +352,49 @@ issue #83）。決算期末日時点の「実際の」株数・「実際に支�
 `eps_adjusted / eps`で求められる。TTM補正前の累積値そのもの（`eps_adjusted`等）は
 このモデルの列として直接公開されている（2026-11-01以降、`per`等からは逆算できない
 点に注意。`per`は`eps_ttm_adjusted`基準）。
+
+### 配当の時系列と決算短信からの算出（2026-11-12追加、#108）
+
+EDINETの半期報告書には1株当たり配当額が載らないため、通期開示の約5か月後から次の通期開示まで
+`dividend_per_share_ttm`がNULLになり、`dividend_yield`が全銘柄で空になっていた（直近日で
+値が入るのは約42%）。決算短信の「配当の状況」には前期実績・当期実績（経過分のみ）・予想の各行が
+（Q1末・Q2末・Q3末・期末・合計）の5スロットで載るため、どの決算短信からも直近12か月の配当を
+組み立てられる（`intermediate__ir_disclosure__dividend_ttm`）。
+
+| 決算短信 | 直近12か月の配当 |
+|---|---|
+| 第1四半期 | 前期Q2 + 前期Q3 + 前期期末 + 当期Q1 |
+| 中間（第2四半期） | 前期Q3 + 前期期末 + 当期Q1 + 当期Q2 |
+| 第3四半期 | 前期期末 + 当期Q1 + Q2 + Q3 |
+| 通期 | 当期の合計 |
+
+- 「－」は0（無配）。必要なスロットが1つでも欠ける、またはスロットの合計が「合計」列と一致しない
+  行（空欄が詰められてスロットがずれた行、約2%）は値を出さない（`estimate_status`相当の
+  `dividend_ttm_status`に理由を残す）。
+- 各日で、その日までに開示された**期末が最も新しい**配当を使う。期末が同じ場合は
+  EDINETのTTM配当 > 決算短信 > TTM配当がNULLのEDINET行。決算短信は開示日の翌日から参照できる。
+  最新の期末の配当が取れない場合は、古い配当を繰り越さず`dividend_yield`をNULLにする
+  （PBRと同じ方針）。
+- **予想配当利回り**（`forecast_dividend_yield`）は、直近の決算短信の予想行の合計
+  （四半期・中間は経過済みスロットと合算して合計列と一致を確認）を、次の決算短信まで
+  持ち越す。通期決算短信は次期、四半期・中間は今期の予想。合計だけ予想して内訳が「－」の会社
+  （任天堂等）は合計をそのまま使う。予想が未定・抽出できない決算短信は採用せず、直前の予想を
+  持ち越す。
+- **株式数の基準**: 実績は決算短信の期末日時点の効力発生日基準の係数、予想は開示日時点の係数
+  （予想は開示時点の株式数で載るため）。
+
+既知の限界:
+
+- 「－」（無配）と「未定」を区別できない（予想が未定の会社は予想配当0と出る可能性がある）。
+- 記念配当・特別配当は直近12か月にそのまま入り、利回りが一時的に跳ねる（EDINETベースのTTMと同じ）。
+- 分割をまたぐ年は、スロット間で株式数の基準が異なる可能性がある（注記で「分割前の実際の
+  配当金の額を記載」とする会社と、遡及修正する会社が混在し、機械的な判定はできない）。
+- 種類株（優先株）の配当が配当表に載る会社（8303等）は、利回りが異常値になることがある
+  （dbtの警告テストで検知）。
+- 配当の時系列は期末が最も新しい行を採るため、有価証券報告書を大幅に遅れて提出した会社
+  （期末の新しい四半期報告書が先に出ている場合）は、遅れて出た古い期の配当が使われず
+  `dividend_yield`がNULLになる（従来は直近に提出された開示をそのまま使っていた）。
+- テキストが空・文字化けの決算短信（約1.2%、#109）は配当が取れない。
 
 ### PBRのBPSと決算短信からの推定（2026-11-05追加）
 

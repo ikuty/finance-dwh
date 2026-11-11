@@ -286,10 +286,12 @@ models:
         description: "shares_adj_ratioで割って当該取引日の株式数基準に換算した発行済株式数。"
       - name: eps_ttm_adjusted / dividend_per_share_ttm_adjusted
         description: >
-          disclosed_fundamentals.eps_ttm/dividend_per_share_ttmを当該取引日の株式数
-          基準に換算した値（2026-11-01追加）。epsはadj_ratio、1株配当はshares_adj_ratio
-          を掛ける（配当は分割前の実額で開示されるため。2026-11-04変更）。per/
-          earnings_yield/dividend_yieldの分母はこちらを使う（下記参照）。
+          disclosed_fundamentals.eps_ttm/配当の直近12か月（dividend_basis参照）を当該取引日の
+          株式数基準に換算した値（2026-11-01追加）。epsはadj_ratio、1株配当は株式数の
+          調整係数を掛ける（配当は分割前の実額で開示されるため。2026-11-04変更）。per/
+          earnings_yield/dividend_yieldの分母はこちらを使う（下記参照）。配当は2026-11-12から
+          決算短信由来の直近12か月配当を含む（半期報告書に1株配当が載らず半期開示が最新の
+          期間にNULLになっていた問題への対応、#108）。
       - name: pbr
         description: >
           株価純資産倍率＝close / bps_adjusted。bpsは期末時点のスナップショットでTTM補正の
@@ -324,7 +326,28 @@ models:
       - name: dividend_per_share_adjusted
         description: "shares_adj_ratioを掛けて当該取引日の株式数基準に換算した1株当たり配当額（累積値そのまま、TTM補正前。2026-11-04にadj_ratioから変更、issue #83）。"
       - name: dividend_yield
-        description: "配当利回り＝dividend_per_share_ttm_adjusted / close（2026-11-01変更、TTMベース。理由はper参照）。"
+        description: >
+          配当利回り（実績）＝dividend_per_share_ttm_adjusted / close（2026-11-01変更、TTMベース。
+          理由はper参照）。2026-11-12から、各日で「期末が最も新しい」直近12か月配当
+          （EDINETの通期等 > 決算短信、出所はdividend_basis）を使う。半期開示が最新でも、
+          決算短信があれば値が入る。最新の期末の配当が取れない場合は古い配当を繰り越さずNULL。
+      - name: dividend_basis
+        description: "dividend_yieldの配当の出所。edinet（EDINET開示のTTM配当） / tanshin（決算短信の配当表から算出した直近12か月配当）。dividend_yieldがNULLの行はNULL。"
+        data_tests:
+          - accepted_values:
+              values: ['edinet', 'tanshin']
+      - name: dividend_ttm_period_end
+        description: "dividend_yieldの直近12か月配当の期末日（決算期末または決算短信の期末）。dividend_yieldがNULLの行はNULL。"
+      - name: forecast_dividend_per_share_adjusted
+        description: "会社予想の年間配当（決算短信の予想行の合計）を当該取引日の株式数基準に換算した1株配当（開示日時点の係数、2026-11-12追加、#108）。"
+      - name: forecast_dividend_yield
+        description: >
+          予想配当利回り＝forecast_dividend_per_share_adjusted / close（2026-11-12追加、#108）。
+          直近に開示された決算短信の予想配当を次の決算短信まで持ち越す（開示日の翌日から）。
+          予想が未定・抽出できない決算短信は採用せず、直前の予想を持ち越す。
+          通期決算短信は次期、四半期・中間は今期の予想（forecast_dividend_period_end参照）。
+      - name: forecast_dividend_period_end
+        description: "予想配当の対象期間の期末日（forecast_period_end、年度表記の会社はNULLのことがある）。"
 
   - name: mart__jpx_edinet__quarterly_fundamentals
     description: >

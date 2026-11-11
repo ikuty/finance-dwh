@@ -114,6 +114,29 @@ def compute_period_end(fye_year: int, fye_month: int, period_type: str | None) -
     return f"{year:04d}-{month:02d}-{last_day:02d}"
 
 
+# タイトルに「2024年度」とだけあり決算月が分からない会社(日本電信電話等、53件、
+# 実機確認2026-11-12)の期間末日は、本文の「１．…の連結業績（2024年4月1日～2025年3月31日）」
+# 見出しの終了日から取る。
+_FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+_RANGE_END_RE = re.compile(r"[～~〜]\s*(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日")
+
+
+def parse_period_end_from_text(lines: list[str]) -> str | None:
+    """本文冒頭の「１．…（YYYY年M月D日～YYYY年M月D日）」見出しの終了日(ISO形式)を返す。"""
+    for line in lines[:80]:
+        s = line.strip().translate(_FULLWIDTH_DIGITS)
+        if not re.match(r"^1[．.]", s):
+            continue
+        m = _RANGE_END_RE.search(s)
+        if not m:
+            continue
+        year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if not 1 <= month <= 12 or not 1 <= day <= calendar.monthrange(year, month)[1]:
+            return None
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    return None
+
+
 def parse_consolidation(title: str) -> str | None:
     if "非連結" in title:
         return "non_consolidated"
@@ -153,12 +176,14 @@ def _normalize_number(token: str) -> str | None:
 
 # --- データ行の抽出 ------------------------------------------------------------
 
+# 「2024年度」「2025年度（予想）」のように「期」でなく「度」で終わるラベルの会社もある
+# (日本電信電話、実機確認2026-11-12)。
 # 「2027年５月期第１四半期 6,334 5.5 585 0.5 ...」「2027年8月期（予想） － 5.00 ...」
 # 「令和８年７月期 ...」のような、期ラベル+数値トークン列からなる行。元号年のデータ行は
 # タイトルで「令和」を示した後、本文では「令和」を省略し「８年10月期...」のように
 # 1〜2桁の年数字だけで始まることを実機確認済み(2026-09-30、株式会社キタック)。
 _PERIOD_ROW_RE = re.compile(
-    r"^(?P<label>\d{1,4}年\S*?期(?:\s*[（(]予想[）)])?)\s+"
+    r"^(?P<label>\d{1,4}年\S*?[期度](?:\s*[（(]予想[）)])?)\s+"
     r"(?P<rest>[△▲▼0-9,.\s％\-－―ー]+)$"
 )
 
@@ -206,11 +231,94 @@ def _find_section_bounds(lines: list[str]) -> dict[str, int]:
             bounds["bounds_2"] = i
         elif "bounds_cf" not in bounds and "キャッシュ・フローの状況" in s:
             bounds["bounds_cf"] = i
-        elif "bounds_dividend" not in bounds and re.match(r"^[２2][．.].*配当の状況", s):
+        elif "bounds_dividend" not in bounds and "…" not in s and _DIVIDEND_HEADING_RE.match(s):
             bounds["bounds_dividend"] = i
         elif "bounds_3" not in bounds and re.match(r"^[３3][．.]", s):
             bounds["bounds_3"] = i
     return bounds
+
+
+# --- 配当表(「配当の状況」) -------------------------------------------------------
+
+# 見出しは「２．配当の状況」の他に「２ 配当の状況」「２．配当」、IFRSでNon-GAAPの節が
+# 挟まる会社の「３．配当の状況」「４．配当の状況」がある(実機確認、2026-11-12、
+# 取りこぼし26件)。節番号に依存せず、短い節見出し行の「配当(の状況)」で探す。
+# 目次の行(「……… 3」)や本文(「配当金の支払額…」)は長さと「…」で除く。
+_DIVIDEND_HEADING_RE = re.compile(r"^[0-9０-９]{1,2}[．.\s]\s*配当(?:の状況)?$")
+_NEXT_SECTION_RE = re.compile(r"^[0-9０-９]{1,2}[．.\s]")
+_DIVIDEND_SLOTS = ("q1", "q2", "q3", "q4", "total")
+# 決算短信の種類ごとに、当期実績の表に現れる経過済みスロット数。
+_ELAPSED_SLOTS = {"q1": 1, "q2_half": 2, "q3": 3, "annual": 5}
+
+
+def _find_dividend_heading_candidates(lines: list[str]) -> list[int]:
+    return [
+        i for i, line in enumerate(lines)
+        if "…" not in line and _DIVIDEND_HEADING_RE.match(line.strip())
+    ]
+
+
+def _tokenize_dividend(rest: str) -> list[str | None]:
+    """配当表の数値トークン列。「－」は無配(0)として"0"にする。"""
+    out: list[str | None] = []
+    for tok in rest.split():
+        out.append("0" if _DASH_RE.match(tok) else _normalize_number(tok))
+    return out
+
+
+def parse_dividend_table(lines: list[str], period_type: str | None) -> dict[str, str | None]:
+    """「配当の状況」の表を、前期・当期・予想の各5スロット(15列)へ展開する。
+
+    実機確認(2026-11-12、決算短信31,892件)で判明したレイアウトの規則:
+      - 表に載らない(空欄の)セルは行のテキストから消え、「－」は残る。そのため位置は
+        決算短信の種類(period_type)で決まる: 当期実績は経過済みスロットが左詰め
+        (Q1=1個、中間=2個、Q3=3個、通期=5個)、予想は未経過スロットが右詰め
+        (Q1=Q2〜合計の4個、中間=3個、Q3=2個、通期=5個)。5個そろう行は全スロット。
+      - 通期の実績・予想の行は、合計の後ろに配当金総額・配当性向・純資産配当率が続く
+        (先頭5個だけを使う)。
+      - 前期行は5個以上あり、Q1〜期末の合計が「合計」列と一致するのが98.1%
+        (一致しない行は空欄詰めや円・銭の分割でスロットがずれている。判定は後段で行う)。
+    行の数が(実績2行・予想1行)または(実績2行・予想0行)でない会社(種類株、
+    普通配当と特別配当の内訳行等)、レイアウトを解釈できない行は、その行をNULLのままにする。
+    """
+    out: dict[str, str | None] = {}
+    for start in _find_dividend_heading_candidates(lines):
+        end = next(
+            (i for i in range(start + 1, min(len(lines), start + 40))
+             if _NEXT_SECTION_RE.match(lines[i].strip())),
+            min(len(lines), start + 40),
+        )
+        actual: list[list[str | None]] = []
+        forecast: list[list[str | None]] = []
+        for line in lines[start + 1:end]:
+            m = _PERIOD_ROW_RE.match(line.strip())
+            if not m:
+                continue
+            tokens = _tokenize_dividend(m.group("rest"))
+            (forecast if "予想" in m.group("label") else actual).append(tokens)
+        if len(actual) != 2 or len(forecast) > 1:
+            continue
+
+        def put(prefix: str, slots: list[str], tokens: list[str | None]) -> None:
+            for slot, value in zip(slots, tokens):
+                out[f"dividend_{prefix}_{slot}"] = value
+
+        all_slots = list(_DIVIDEND_SLOTS)
+        prior, cur = actual
+        if len(prior) >= 5:
+            put("prior", all_slots, prior[:5])
+        n = _ELAPSED_SLOTS.get(period_type or "")
+        if n is not None and (len(cur) == n or len(cur) == 5 or (n == 5 and len(cur) > 5)):
+            put("cur", all_slots, cur[:5])
+        if forecast:
+            fc = forecast[0]
+            if period_type == "annual":
+                if len(fc) >= 5:
+                    put("fcst", all_slots, fc[:5])
+            elif 2 <= len(fc) <= 5:
+                put("fcst", all_slots[5 - len(fc):], fc)
+        break
+    return out
 
 
 # 会計基準ごとの「業績」セクションの列順(売上/営業利益の後に続く利益指標の意味)。
@@ -298,6 +406,26 @@ class FactRow:
     forecast_eps: str | None
     forecast_period_end: str | None
 
+    # 配当表(「配当の状況」): 前期実績・当期実績(経過分のみ)・予想の各行×5スロット
+    # (第1四半期末・第2四半期末・第3四半期末・期末・合計)。「－」は0(無配)、
+    # 表に無い(空欄)スロットとレイアウトを解釈できない行はNULL。
+    # 詳細はparse_dividend_table参照(2026-11-12追加、#108)。
+    dividend_prior_q1: str | None
+    dividend_prior_q2: str | None
+    dividend_prior_q3: str | None
+    dividend_prior_q4: str | None
+    dividend_prior_total: str | None
+    dividend_cur_q1: str | None
+    dividend_cur_q2: str | None
+    dividend_cur_q3: str | None
+    dividend_cur_q4: str | None
+    dividend_cur_total: str | None
+    dividend_fcst_q1: str | None
+    dividend_fcst_q2: str | None
+    dividend_fcst_q3: str | None
+    dividend_fcst_q4: str | None
+    dividend_fcst_total: str | None
+
 
 FACT_COLUMNS = [f.name for f in fields(FactRow)]
 
@@ -348,6 +476,8 @@ def run(
     accounting_standard = parse_accounting_standard(title) or "jgaap"
     fye = parse_fiscal_year_end(title)
     period_end = compute_period_end(fye[0], fye[1], period_type) if fye else None
+    if period_end is None:
+        period_end = parse_period_end_from_text(lines)
     # forecast_epsが指す対象期間(forecast_period_end)は、当該開示自身の期間
     # (period_end)とは異なる(2026-10-03にmart設計で判明、実データで検証済み)。
     # 四半期決算短信(q1/q2_half/q3)の「３．業績予想」は今期進行中の通期予想
@@ -435,6 +565,8 @@ def run(
             if idx < len(rest):
                 out["forecast_eps"] = rest[-1]
             break
+
+    out.update(parse_dividend_table(lines, period_type))
 
     _explicit = {
         "docid", "edinet_code", "sec_code", "extraction_status", "period_type",

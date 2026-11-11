@@ -54,8 +54,11 @@ sources:
           補足説明資料・期中レビュー完了notice・開示予定日に関するお知らせ）は
           extraction_statusで区別し、財務数値は本体(extraction_status='ok')の
           みに入る（詳細はir_disclosure_kessan_facts.pyのdocstring参照）。
+          配当表の15列(dividend_*、2026-11-12追加)は追加前に書いた日付のパーティションに
+          無いため、union_by_name=trueで読み、無い列はNULLにする（保存済みテキストからの
+          再抽出で埋めるまでの暫定、#108）。
         meta:
-          external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/ir_disclosure_kessan_facts/*/part.parquet', hive_partitioning=false)"
+          external_location: "read_parquet('{{ env_var('LANDING_ROOT', '/data/landing') }}/ir_disclosure_kessan_facts/*/part.parquet', hive_partitioning=false, union_by_name=true)"
       - name: ir_disclosure_reit_ixbrl_facts
         description: >
           ir-disclosure-dlが取得するREIT(投資法人)決算短信iXBRLの`tse-re-t:`タクソノミ
