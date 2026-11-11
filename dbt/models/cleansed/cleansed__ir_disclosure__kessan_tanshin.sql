@@ -86,5 +86,25 @@ select
     -- 通期・本決算は次期通期を指す。ir_disclosure_kessan_facts.run参照、2026-10-03追加)。
     try_cast(forecast_period_end as date)                       as forecast_period_end,
 
+    -- 配当表(「配当の状況」)の前期実績・当期実績(経過分のみ)・予想の各行×5スロット
+    -- (Q1末・Q2末・Q3末・期末・合計、2026-11-12追加、#108)。landing側で「－」は0、
+    -- 空欄・解釈できない行はNULLに正規化済み。スロットの合計と「合計」の整合性判定や
+    -- 直近12か月の配当の算出はintermediate層で行う。
+    try_cast(dividend_prior_q1 as decimal(18, 4))                  as dividend_prior_q1,
+    try_cast(dividend_prior_q2 as decimal(18, 4))                  as dividend_prior_q2,
+    try_cast(dividend_prior_q3 as decimal(18, 4))                  as dividend_prior_q3,
+    try_cast(dividend_prior_q4 as decimal(18, 4))                  as dividend_prior_q4,
+    try_cast(dividend_prior_total as decimal(18, 4))               as dividend_prior_total,
+    try_cast(dividend_cur_q1 as decimal(18, 4))                    as dividend_cur_q1,
+    try_cast(dividend_cur_q2 as decimal(18, 4))                    as dividend_cur_q2,
+    try_cast(dividend_cur_q3 as decimal(18, 4))                    as dividend_cur_q3,
+    try_cast(dividend_cur_q4 as decimal(18, 4))                    as dividend_cur_q4,
+    try_cast(dividend_cur_total as decimal(18, 4))                 as dividend_cur_total,
+    try_cast(dividend_fcst_q1 as decimal(18, 4))                   as dividend_fcst_q1,
+    try_cast(dividend_fcst_q2 as decimal(18, 4))                   as dividend_fcst_q2,
+    try_cast(dividend_fcst_q3 as decimal(18, 4))                   as dividend_fcst_q3,
+    try_cast(dividend_fcst_q4 as decimal(18, 4))                   as dividend_fcst_q4,
+    try_cast(dividend_fcst_total as decimal(18, 4))                as dividend_fcst_total,
+
     try_cast(_loaded_at as timestamptz)                         as _loaded_at
 from {{ source('landing', 'ir_disclosure_kessan_facts') }}

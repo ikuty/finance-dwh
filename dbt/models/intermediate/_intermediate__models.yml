@@ -213,3 +213,38 @@ models:
           - not_null
           - accepted_values:
               values: ['ok', 'ratio_out_of_range', 'net_assets_missing', 'no_prior_annual', 'no_adjustment_factor']
+
+  - name: intermediate__ir_disclosure__dividend_ttm
+    description: >
+      決算短信（四半期・半期・通期）の配当表から算出した、1件ごとの「直近12か月の実績配当」
+      と「当期（通期）の予想配当」（毎回フル rebuild、Parquet、2026-11-12新設、#108）。
+      半期報告書が最新の期間に配当利回りがNULLになる問題への対応で、bps_estimatesと同じ
+      構成。実績は前期・当期のスロット（Q1末・Q2末・Q3末・期末）を決算短信の種類ごとに
+      合算し、予想は予想行の合計を使う。スロットが欠けた行や、スロットの合計が「合計」列と
+      一致しない行（空欄詰めによるずれ）は値を出さず、理由をstatus列に残す。株式数の基準は
+      決算短信の期末日（shares_period_end_cum_adjと対）。詳細は元SQLのコメント参照。
+    columns:
+      - name: edinet_code
+        data_tests: [not_null]
+      - name: period_end
+        data_tests: [not_null]
+      - name: dividend_ttm
+        description: "直近12か月の実績配当（1株、円、期末日時点の株式数基準）。dividend_ttm_status='ok'のときのみ値を持つ。"
+      - name: dividend_ttm_status
+        description: "ok / no_dividend_table（配当表が取れていない） / slots_missing（必要なスロットが欠けている） / dividend_inconsistent（スロットの合計が合計列と不一致） / no_adjustment_factor。"
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['ok', 'no_dividend_table', 'slots_missing', 'dividend_inconsistent', 'no_adjustment_factor']
+      - name: dividend_forecast_annual
+        description: "当期の年間予想配当（1株、円、開示日時点の株式数基準、shares_disclosed_cum_adjと対）。通期決算短信は次期の予想。dividend_forecast_statusがok/ok_total_onlyのときのみ値を持つ。「－」と「未定」は区別できない。"
+      - name: dividend_forecast_status
+        description: "ok / ok_total_only（合計だけ予想し内訳が「－」） / no_forecast（予想行が無い） / slots_missing / dividend_inconsistent / no_adjustment_factor。"
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['ok', 'ok_total_only', 'no_forecast', 'slots_missing', 'dividend_inconsistent', 'no_adjustment_factor']
+      - name: shares_period_end_cum_adj
+        description: "決算短信の期末日時点の累積調整係数（株式数用、効力発生日基準）。実績配当(dividend_ttm)の基準。"
+      - name: shares_disclosed_cum_adj
+        description: "決算短信の開示日時点の累積調整係数（株式数用、効力発生日基準）。予想配当(dividend_forecast_annual)の基準。"
