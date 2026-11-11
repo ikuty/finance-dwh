@@ -91,6 +91,11 @@
 -- 株式数基準へ変換した上でdividend_per_share_adjustedとし、
 -- dividend_yield = dividend_per_share_adjusted / closeとする。
 --
+-- dividend_yield・dividend_per_share_ttm_adjustedの配当は、2026-11-12から決算短信の配当表由来の
+-- 直近12か月配当を含む時系列（dividend_timeline、出所はdividend_basis）を使う。半期報告書に
+-- 1株配当が載らず、半期開示が最新の期間に全銘柄でNULLになっていた問題への対応(#108)。
+-- 予想ベースの配当利回り（forecast_dividend_yield）も別列で持つ（決算短信の予想年間配当÷close）。
+--
 -- per/psr/dividend_yield/earnings_yieldはTTM（直近12か月）ベース(2026-11-01変更、
 -- 重要): 四半期・半期開示のeps/sales/dividend_per_shareは期首からの累積値のため、
 -- これらをそのまま分母にすると通期開示の度に値が不連続に跳ねる（実データ検証:
@@ -120,7 +125,7 @@ fundamentals as (
     select
         jpx_code, doc_id, submit_date_time,
         eps, bps, sales, shares_outstanding, dividend_per_share,
-        eps_ttm, sales_ttm, dividend_per_share_ttm,
+        eps_ttm, sales_ttm,
         period_end_cum_adj, shares_period_end_cum_adj
     from {{ ref('mart__jpx_edinet__disclosed_fundamentals') }}
 ),
@@ -178,6 +183,71 @@ bps_timeline as (
     where period_end is not null
 ),
 
+-- 配当（実績・直近12か月）の時系列（2026-11-12追加、#108）: 半期報告書に1株当たり配当額が
+-- 載らず、半期開示が最新の期間はEDINETのdividend_per_share_ttmがNULLになり、配当利回りが
+-- 全銘柄で空になっていた。決算短信の配当表から算出した直近12か月配当
+-- （intermediate__ir_disclosure__dividend_ttm、status='ok'の行のみ）を加え、bps_timelineと
+-- 同じく各日で「期末が最も新しい」配当を採用する。期末が同じ場合の優先順位: EDINETの
+-- TTM配当（通期・値のある行）(3) > 決算短信(2) > TTM配当がNULLのEDINET行(1)。最新の期末の行
+-- に配当が無い（決算短信も取れていない）場合は、古い期末の配当を繰り越さず利回りをNULLにする。
+-- 決算短信は開示日の翌日から参照可能（当日引け後の開示を先読みしない、bps_eventsと同じ）。
+-- 株式数の基準は各行の期末日時点（div_cum_adj、効力発生日基準のshares_period_end_cum_adj）。
+dividend_events as (
+    select
+        jpx_code,
+        submit_date_time                                          as disclosed_at,
+        period_end,
+        case when dividend_per_share_ttm is not null then 3 else 1 end as prio,
+        dividend_per_share_ttm                                    as div_ttm,
+        shares_period_end_cum_adj                                 as div_cum_adj,
+        'edinet'                                                  as basis
+    from {{ ref('mart__jpx_edinet__disclosed_fundamentals') }}
+    union all
+    select
+        jpx_code,
+        cast(disclosed_at as timestamp) + interval 1 day          as disclosed_at,
+        period_end,
+        2                                                         as prio,
+        dividend_ttm                                              as div_ttm,
+        shares_period_end_cum_adj                                 as div_cum_adj,
+        'tanshin'                                                 as basis
+    from {{ ref('intermediate__ir_disclosure__dividend_ttm') }}
+    where dividend_ttm_status = 'ok'
+),
+
+dividend_timeline as (
+    select
+        jpx_code,
+        disclosed_at,
+        arg_max(
+            struct_pack(period_end := period_end, div_ttm := div_ttm, div_cum_adj := div_cum_adj, basis := basis),
+            (date_diff('day', date '1970-01-01', period_end) * 10 + prio) * 10000000000
+                + cast(epoch(disclosed_at) as bigint)
+        ) over (
+            partition by jpx_code
+            order by disclosed_at, period_end, prio
+            rows between unbounded preceding and current row
+        ) as best
+    from dividend_events
+    where period_end is not null
+),
+
+-- 配当（予想・当期の年間配当）の時系列（#108）: 決算短信の予想行の合計。会社が直近に開示した
+-- 予想を次の決算短信まで持ち越す（期末ではなく開示日の新しいものを採る）。株式数の基準は
+-- 開示日時点（fc_cum_adj、予想は開示時点の株式数で載るため）。算出できない決算短信
+-- （予想が未定・抽出できない等）は事象に含めず、直前の予想を持ち越す。
+forecast_events as (
+    select
+        jpx_code,
+        cast(disclosed_at as timestamp) + interval 1 day as visible_from,
+        forecast_period_end                              as fc_period_end,
+        dividend_forecast_annual                         as fc_value,
+        shares_disclosed_cum_adj                         as fc_cum_adj
+    from {{ ref('intermediate__ir_disclosure__dividend_ttm') }}
+    where dividend_forecast_status in ('ok', 'ok_total_only')
+    qualify row_number() over (partition by jpx_code, disclosed_at order by period_end desc) = 1
+),
+
 -- 各取引日について、その日「時点で開示済み」の直近の開示をASOF JOINで判定する。
 daily as (
     select
@@ -187,10 +257,13 @@ daily as (
         p.file_date_cum_adj,
         f.doc_id,
         f.eps, f.bps, f.sales, f.shares_outstanding, f.dividend_per_share,
-        f.eps_ttm, f.sales_ttm, f.dividend_per_share_ttm,
+        f.eps_ttm, f.sales_ttm,
         f.period_end_cum_adj, f.shares_period_end_cum_adj,
         b.best.bps_pe as bps_timeline_bps, b.best.pe_cum_adj as bps_timeline_cum_adj,
-        b.best.basis as bps_timeline_basis, b.best.period_end as bps_timeline_period_end
+        b.best.basis as bps_timeline_basis, b.best.period_end as bps_timeline_period_end,
+        d.best.div_ttm as div_timeline_ttm, d.best.div_cum_adj as div_timeline_cum_adj,
+        d.best.basis as div_timeline_basis, d.best.period_end as div_timeline_period_end,
+        fe.fc_value, fe.fc_cum_adj, fe.fc_period_end
     from prices p
     asof left join fundamentals f
         on p.code = f.jpx_code
@@ -198,6 +271,12 @@ daily as (
     asof left join bps_timeline b
         on p.code = b.jpx_code
         and b.disclosed_at <= p.file_date
+    asof left join dividend_timeline d
+        on p.code = d.jpx_code
+        and d.disclosed_at <= p.file_date
+    asof left join forecast_events fe
+        on p.code = fe.jpx_code
+        and fe.visible_from <= p.file_date
 )
 
 select
@@ -219,8 +298,16 @@ select
         then dividend_per_share * shares_period_end_cum_adj / file_date_cum_adj end as dividend_per_share_adjusted,
     case when eps_ttm is not null and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then eps_ttm * period_end_cum_adj / file_date_cum_adj end as eps_ttm_adjusted,
-    case when dividend_per_share_ttm is not null and shares_period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
-        then dividend_per_share_ttm * shares_period_end_cum_adj / file_date_cum_adj end as dividend_per_share_ttm_adjusted,
+    case when div_timeline_ttm is not null and div_timeline_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then div_timeline_ttm * div_timeline_cum_adj / file_date_cum_adj end as dividend_per_share_ttm_adjusted,
+    case when div_timeline_ttm is not null and div_timeline_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then div_timeline_basis end as dividend_basis,
+    case when div_timeline_ttm is not null and div_timeline_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then div_timeline_period_end end as dividend_ttm_period_end,
+    case when fc_value is not null and fc_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then fc_value * fc_cum_adj / file_date_cum_adj end as forecast_dividend_per_share_adjusted,
+    case when fc_value is not null and fc_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then fc_period_end end as forecast_dividend_period_end,
     case when bps_timeline_bps is not null and bps_timeline_bps != 0 and bps_timeline_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then close / (bps_timeline_bps * bps_timeline_cum_adj / file_date_cum_adj) end as pbr,
     case when bps_timeline_bps is not null and bps_timeline_bps != 0 and bps_timeline_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
@@ -235,6 +322,8 @@ select
         then (close * (shares_outstanding * file_date_cum_adj / shares_period_end_cum_adj)) / sales_ttm end as psr,
     case when eps_ttm is not null and close is not null and close != 0 and period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then (eps_ttm * period_end_cum_adj / file_date_cum_adj) / close end as earnings_yield,
-    case when dividend_per_share_ttm is not null and close is not null and close != 0 and shares_period_end_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
-        then (dividend_per_share_ttm * shares_period_end_cum_adj / file_date_cum_adj) / close end as dividend_yield
+    case when div_timeline_ttm is not null and close is not null and close != 0 and div_timeline_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then (div_timeline_ttm * div_timeline_cum_adj / file_date_cum_adj) / close end as dividend_yield,
+    case when fc_value is not null and close is not null and close != 0 and fc_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
+        then (fc_value * fc_cum_adj / file_date_cum_adj) / close end as forecast_dividend_yield
 from daily
