@@ -15,6 +15,8 @@ import logging
 from pathlib import Path
 
 import duckdb
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 import ir_disclosure_kessan_pdf
@@ -55,6 +57,14 @@ def parquet_rows(path: Path) -> list[tuple[object, ...]]:
         return con.execute(f"select * from read_parquet('{path.as_posix()}', hive_partitioning=false)").fetchall()
     finally:
         con.close()
+
+
+def make_landing_facts(landing: Path, date: str, docids: list[str]) -> None:
+    """landing/ir_disclosure_kessan_facts/file_date=<date>/part.parquet を、指定docidだけで作る。"""
+    out_dir = landing / "ir_disclosure_kessan_facts" / f"file_date={date}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tbl = pa.table({"docid": pa.array(docids, type=pa.string()), "file_date": pa.array([date] * len(docids))})
+    pq.write_table(tbl, out_dir / "part.parquet")
 
 
 def parquet_columns(path: Path) -> list[str]:
@@ -128,9 +138,7 @@ def test_recent_and_backlog_dates_to_load_partition_disk_dates(tmp_path: Path) -
     landing = tmp_path / "landing"
     for d in ("2024-01-05", "2026-09-07", "2026-09-08", "2026-09-10"):
         make_kessan_pdf(lake, d, "E00012", f"doc_{d}")
-    done_dir = landing / "ir_disclosure_kessan_facts" / "file_date=2024-01-05"
-    done_dir.mkdir(parents=True)
-    (done_dir / "part.parquet").write_bytes(b"x")
+    make_landing_facts(landing, "2024-01-05", ["doc_2024-01-05"])
 
     today = datetime.date(2026, 9, 10)
     recent = m.recent_dates_to_load(lake, landing, today, lookback=3)
@@ -138,6 +146,92 @@ def test_recent_and_backlog_dates_to_load_partition_disk_dates(tmp_path: Path) -
 
     assert recent == ["2026-09-07", "2026-09-08", "2026-09-10"]
     assert backlog == []  # 2024-01-05は取り込み済み
+
+
+# --- 取り込み済みの判定(docid単位、finance-dwh Issue #113) --------------------------------
+
+
+def test_complete_dates_requires_all_lake_docids_in_landing(tmp_path: Path) -> None:
+    lake, landing = tmp_path / "lake", tmp_path / "landing"
+    make_kessan_pdf(lake, "2024-10-07", "E00012", "docA")
+    make_kessan_pdf(lake, "2024-10-07", "E37911", "docB")  # 取り込み後にレイクへ追加された文書
+    make_landing_facts(landing, "2024-10-07", ["docA"])
+    make_kessan_pdf(lake, "2024-10-08", "E00012", "docC")
+    make_landing_facts(landing, "2024-10-08", ["docC", "docOld"])  # landingにレイクに無い分があってもよい
+
+    assert m.complete_dates(lake, landing) == {"2024-10-08"}
+
+
+def test_backlog_dates_include_complete_partition_missing_a_lake_doc(tmp_path: Path) -> None:
+    lake, landing = tmp_path / "lake", tmp_path / "landing"
+    make_kessan_pdf(lake, "2024-10-07", "E00012", "docA")
+    make_kessan_pdf(lake, "2024-10-07", "E37911", "docB")
+    make_landing_facts(landing, "2024-10-07", ["docA"])
+    today = datetime.date(2026, 11, 14)
+
+    assert m.backlog_dates_to_load(lake, landing, today, lookback=7) == ["2024-10-07"]
+    assert m.recent_dates_to_load(lake, landing, today, lookback=7) == []
+
+
+def test_recent_dates_include_partition_missing_a_lake_doc(tmp_path: Path) -> None:
+    lake, landing = tmp_path / "lake", tmp_path / "landing"
+    make_kessan_pdf(lake, "2026-11-12", "E00012", "docA")
+    make_kessan_pdf(lake, "2026-11-12", "E37911", "docB")
+    make_landing_facts(landing, "2026-11-12", ["docA"])
+
+    assert m.recent_dates_to_load(lake, landing, datetime.date(2026, 11, 14), lookback=7) == ["2026-11-12"]
+
+
+def test_complete_dates_treats_unreadable_partition_as_incomplete(tmp_path: Path) -> None:
+    lake, landing = tmp_path / "lake", tmp_path / "landing"
+    make_kessan_pdf(lake, "2024-01-05", "E00012", "docA")
+    corrupt_dir = landing / "ir_disclosure_kessan_facts" / "file_date=2024-01-05"
+    corrupt_dir.mkdir(parents=True)
+    (corrupt_dir / "part.parquet").write_bytes(b"not parquet")
+
+    assert m.complete_dates(lake, landing) == set()
+
+
+def test_lake_docids_ignores_reit_other_kinds_and_json_without_pdf(tmp_path: Path) -> None:
+    lake = tmp_path / "lake"
+    make_kessan_pdf(lake, "2026-09-01", "E00012", "docBiz")
+    make_kessan_pdf(
+        lake, "2026-09-01", "E00099", "docReit",
+        ixbrl_url="https://www2.jpx.co.jp/disc/89530/081220260901500001_tse-anrejpsm-89530-20260901389530-ixbrl.htm",
+    )
+    make_kessan_pdf(lake, "2026-09-01", "E00013", "docOther", disclosure_kind="other")
+    no_pdf = make_kessan_pdf(lake, "2026-09-01", "E00014", "docNoPdf")
+    no_pdf.unlink()
+
+    assert m.lake_docids_by_date(lake) == {"2026-09-01": {"docBiz"}}
+
+
+def test_date_with_only_non_pdf_metadata_is_complete_once_partition_exists(tmp_path: Path) -> None:
+    lake, landing = tmp_path / "lake", tmp_path / "landing"
+    make_kessan_pdf(lake, "2026-09-01", "E00014", "docNoPdf").unlink()
+    make_landing_facts(landing, "2026-09-01", [])
+
+    assert m.complete_dates(lake, landing) == {"2026-09-01"}
+
+
+def test_load_one_catches_up_documents_added_to_lake_after_ingest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lake, landing = tmp_path / "lake", tmp_path / "landing"
+    monkeypatch.setattr(ir_disclosure_kessan_pdf, "extract_text", lambda path: "ダミー本文")
+    make_kessan_pdf(lake, "2024-10-07", "E00012", "docA")
+    m.load_one(lake, landing, "2024-10-07")
+    assert m.complete_dates(lake, landing) == {"2024-10-07"}
+
+    make_kessan_pdf(lake, "2024-10-07", "E37911", "docB")  # バックフィルの昇格で後から増える
+    assert m.complete_dates(lake, landing) == set()
+    assert m.backlog_dates_to_load(lake, landing, datetime.date(2026, 11, 14), lookback=7) == ["2024-10-07"]
+
+    m.load_one(lake, landing, "2024-10-07")
+    assert m.complete_dates(lake, landing) == {"2024-10-07"}
+    assert m.backlog_dates_to_load(lake, landing, datetime.date(2026, 11, 14), lookback=7) == []
+    facts_out = landing / "ir_disclosure_kessan_facts" / "file_date=2024-10-07" / "part.parquet"
+    assert {r[parquet_columns(facts_out).index("docid")] for r in parquet_rows(facts_out)} == {"docA", "docB"}
 
 
 # --- load_one(ir_disclosure_kessan_pdf.extract_text / ir_disclosure_kessan_facts.run を monkeypatch) -

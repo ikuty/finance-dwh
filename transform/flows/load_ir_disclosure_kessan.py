@@ -17,6 +17,9 @@ file_dateはir-disclosure-dl側のディレクトリ構造({yyyy}/{mm}/{dd}/{edi
 disclosure_kind=kessan_tanshinのもの)をglobするだけで行う(edinet-dlの
 document_list.jsonと同じ発想、ir-disclosure-dl自身のSQLite進捗DBは読まない)。
 
+「取り込み済み」の判定は、パーティションの存在ではなく「レイクのその日の決算短信のdocidが
+landingに全て揃っているか」で行う(complete_dates)。ir-disclosure-dlのバックフィルを後から
+昇格すると、取り込み済みの日付にレイク側の文書が増えるため(finance-dwh Issue #113)。
 jpx_stqと同じ理由(docs/deployment_design.md参照)で「直近LANDING_LOOKBACK_DAYS日
 (保証枠)」と「それより前の未取り込み日(バックログ)」を分離している。
 """
@@ -33,6 +36,7 @@ from pathlib import Path
 
 import duckdb
 import pyarrow as pa
+import pyarrow.parquet as pq
 from prefect import get_run_logger, task
 
 import ir_disclosure_kessan_facts as facts_stage
@@ -104,19 +108,56 @@ def landing_logged_dates(landing_root: Path) -> set[str]:
     return out
 
 
+def lake_docids_by_date(lake_root: Path) -> dict[str, set[str]]:
+    """レイクの事業会社の決算短信(メタデータJSONがkessan_tanshinで、対応するPDFがあるもの。
+    load_oneが取り込む対象と同じ)のdocidを、日付ごとに返す。"""
+    base = lake_root / "ir-disclosure-dl" / "raw"
+    out: dict[str, set[str]] = {}
+    if not base.is_dir():
+        return out
+    for json_path in base.glob("*/*/*/*/*.json"):
+        if not json_path.with_suffix(".pdf").exists() or not _is_kessan_tanshin_json(json_path):
+            continue
+        yyyy, mm, dd = json_path.parts[-5:-2]
+        out.setdefault(f"{yyyy}-{mm}-{dd}", set()).add(json_path.stem)
+    return out
+
+
+def landing_docids(landing_root: Path, date: str) -> set[str]:
+    """landing/ir_disclosure_kessan_facts/file_date=<date> に取り込み済みのdocid。
+    読めないParquet(破損)は空集合(=未取り込み扱い)。"""
+    path = landing_root / "ir_disclosure_kessan_facts" / f"file_date={date}" / "part.parquet"
+    try:
+        tbl = pq.read_table(path, columns=["docid"])
+    except (OSError, pa.ArrowException, KeyError):
+        return set()
+    return {d for d in tbl.column("docid").to_pylist() if d}
+
+
+def complete_dates(lake_root: Path, landing_root: Path) -> set[str]:
+    """landingに取り込み済みで、かつレイクのその日の決算短信がすべて含まれている日付。
+
+    パーティションの存在だけで取り込み済みとみなすと、取り込み後にレイクへ追加された文書
+    (決算短信バックフィルの昇格分、finance-dwh Issue #113)が再取り込みされない。そのため、
+    レイクのdocidがlandingに全て揃っている日だけを完了とする。"""
+    logged = landing_logged_dates(landing_root)
+    lake = lake_docids_by_date(lake_root)
+    return {d for d in logged if lake.get(d, set()) <= landing_docids(landing_root, d)}
+
+
 def recent_dates(today: datetime.date, days: int) -> set[str]:
     return {(today - datetime.timedelta(days=i)).isoformat() for i in range(days + 1)}
 
 
 def recent_dates_to_load(lake_root: Path, landing_root: Path, today: datetime.date, lookback: int) -> list[str]:
     on_disk = disk_dates(lake_root)
-    done = landing_logged_dates(landing_root)
+    done = complete_dates(lake_root, landing_root)
     return sorted((on_disk - done) & recent_dates(today, lookback))
 
 
 def backlog_dates_to_load(lake_root: Path, landing_root: Path, today: datetime.date, lookback: int) -> list[str]:
     on_disk = disk_dates(lake_root)
-    done = landing_logged_dates(landing_root)
+    done = complete_dates(lake_root, landing_root)
     return sorted((on_disk - done) - recent_dates(today, lookback))
 
 
