@@ -63,6 +63,11 @@ compose / systemd はレジストリ接頭辞の無いローカルタグ（`fina
 を参照する。deploy は `docker pull ghcr.io/...` の後に同名タグへ `docker tag` する
 （edinet-dl で実機確認済みの不具合対策）。
 
+旧イメージは、同じタグを付け替えた時点で dangling（`<none>`）になる。デプロイのたびに
+約1.4GBずつ溜まる（2026-11-14の実機で約5.9GB）ため、付け替えの後に `docker image prune -f`
+で回収する。`-a` は付けない（日次の systemd タイマーが使う `:latest` のイメージは残す。
+停止中のコンテナが使うイメージは prune が除外する）。回収の失敗は警告にとどめる。
+
 ### 反映タイミング
 
 `docker compose run --rm` 方式（コンテナ内にデーモンを置かない）のため、pull 後の
@@ -175,7 +180,7 @@ Postgres 版が既に Mac Mini 上で稼働・初回バックフィル済みの�
 5. `sudo systemctl daemon-reload`
 6. `compose/.env` を更新（`PGDATA_DIR`/`POSTGRES_*` を削除、`DATA_DIR` を追加。上記参照）
 7. `docker pull` + `docker tag` で `finance-dwh-transform:latest` を更新（deploy workflow
-   を回すか手動で）
+   を回すか手動で。deploy workflow は旧イメージの `docker image prune -f` も行う）
 8. 動作確認: `sudo systemctl start finance-dwh-transform.service` →
    `journalctl -u finance-dwh-transform.service` で landing 取り込み・dbt build・
    レポート URL を確認
