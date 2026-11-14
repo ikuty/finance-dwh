@@ -1,15 +1,23 @@
 name: Gitleaks
 
 # 設計: docs/deployment_design.md「秘密情報の継続的なチェック（gitleaks）」
-# main への push で実行。公開リポジトリなら無料で動作し、追加の認証情報は不要
-# （private の場合は GITLEAKS_LICENSE が必要）。過去履歴の遡及スキャンは行わない。
+# main への push と pull_request（feature ブランチ→dev の PR 等）で実行。公開リポジトリなら
+# 無料で動作し、追加の認証情報は不要（private の場合は GITLEAKS_LICENSE が必要）。
+# 過去履歴の遡及スキャンは行わない。
+#
+# pull_request でも実行する理由（2026-11-14判明）: リリースは release→main の merge commit で
+# main に入るため、gitleaks-action が push 範囲に使う `git log --no-merges --first-parent` では
+# merge commit しか出ず、main への push では常に「0 commits scanned」になる（スキャンされない）。
+# 実際のコミットは PR（feature→dev）に現れるので、PR のコミットをスキャンする。
 
 on:
   push:
     branches: [main]
+  pull_request:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   scan:
