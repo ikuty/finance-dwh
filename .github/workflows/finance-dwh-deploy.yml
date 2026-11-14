@@ -46,6 +46,12 @@ jobs:
             git pull origin main
             docker pull ghcr.io/${{ github.repository_owner }}/finance-dwh-transform:latest
             docker tag ghcr.io/${{ github.repository_owner }}/finance-dwh-transform:latest finance-dwh-transform:latest
+            # 旧イメージは、同じタグを付け替えた時点でタグが外れて dangling(<none>)になり、
+            # デプロイのたびに約1.4GBずつ溜まる(2026-11-14の実機で約5.9GB)。タグの付け替えが済んだ
+            # 後に回収する。-a は付けない: 日次の systemd タイマーが使う:latestのイメージ
+            # (mufg-corporate-actions等)は残し、停止中のコンテナが使うイメージも prune が自動で
+            # 除外する。回収の失敗はデプロイの成否と無関係なので警告にとどめる(set -e で落とさない)。
+            docker image prune -f || echo "::warning::docker image prune に失敗(デプロイ自体は完了している)"
 
 # docker compose run --rm 方式（コンテナ内にデーモンを置かない）のため、pull 後の再起動や
 # サービス再読み込みは不要。次回の systemd タイマー実行から新しいイメージが使われる。
