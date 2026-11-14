@@ -50,7 +50,7 @@ Postgres 版にあった `PGDATA_DIR` / `POSTGRES_USER` / `POSTGRES_PASSWORD` /
 | `finance-dwh-ci.yml` | push(main) / PR | `mypy --strict` + `pytest` + `dbt parse`（DuckDB `ci` ターゲットは `:memory:`、DB 接続設定不要） |
 | `finance-dwh-build-push.yml` | push(main, paths: transform/dbt) | `finance-dwh-transform` の1イメージを ghcr.io へ push（postgres イメージは廃止） |
 | `finance-dwh-deploy.yml` | `workflow_dispatch`（手動） | Tailscale+SSH で `git pull` + `docker pull` + ローカルタグへ retag |
-| `gitleaks.yml` | push(main) | 秘密情報スキャン |
+| `gitleaks.yml` | push(main)・pull_request | 秘密情報スキャン（main への push は merge commit のみで 0 commits scanned になるため、PR のコミットをスキャンする、2026-11-14） |
 
 ### Secrets（登録済み）
 
