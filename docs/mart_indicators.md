@@ -331,6 +331,9 @@ issue #83）。決算期末日時点の「実際の」株数・「実際に支�
 | `dividend_basis` / `dividend_ttm_period_end` | 配当の出所（`edinet`または`tanshin`）とその期末日 | `dividend_yield`がNULLの行はNULL |
 | `forecast_dividend_per_share_adjusted` / `forecast_dividend_yield` | 予想配当（調整後）と予想配当利回り | `予想年間配当 × (開示日の係数 ÷ 取引日の係数)` / `÷ close` |
 | `forecast_dividend_period_end` | 予想配当の対象期間の期末日 | 年度表記の会社はNULLのことがある |
+| `disclosure_period_end` | その日に可視（開示済み）な、期末が最も新しい期の期末日 | `intermediate__disclosure_events`（EDINETと決算短信を合わせ、期ごとに早いほうの開示で可視になる） |
+| `fiscal_quarter` | `disclosure_period_end` の会計期（`1Q` / `2Q` / `3Q` / `4Q`、通期は`4Q`） | 期種から機械的に決まる（q1→1Q、q2/half→2Q、q3→3Q、annual→4Q）。期種が取れない決算短信の期（約15件）はNULL |
+| `is_first_day_after_disclosure` | その期が最初に反映される営業日だけ `true` | 直前の取引日と `disclosure_period_end` が違う日 |
 
 分母が0またはNULLの場合は該当指標もNULLになる。`per`/`psr`/`dividend_yield`/
 `earnings_yield`のTTM補正の詳細は`mart__jpx_edinet__disclosed_fundamentals`の
@@ -395,6 +398,26 @@ EDINETの半期報告書には1株当たり配当額が載らないため、通�
   （期末の新しい四半期報告書が先に出ている場合）は、遅れて出た古い期の配当が使われず
   `dividend_yield`がNULLになる（従来は直近に提出された開示をそのまま使っていた）。
 - テキストが空・文字化けの決算短信（約1.2%、#109）は配当が取れない。
+
+### 開示の目印と会計期（2026-11-16追加、#129）
+
+バリュエーション履歴を四半期ごとに取得するための列（`disclosure_period_end`・`fiscal_quarter`・
+`is_first_day_after_disclosure`）。`is_first_day_after_disclosure` が `true` の行だけを取ると、
+決算ごとの「開示後の最初の営業日」の行が、会計期（1Q〜4Q）付きで得られる。
+
+- **開示の定義**: 同じ期の決算短信とEDINETの報告書のうち、**早いほうが可視になる日**を、その期が
+  最初に反映される起点とする（決算短信は開示日の翌日、EDINETは提出日の翌日。既存の可視ルールと同じ）。
+  後から届くEDINETの確定値は、別のイベントにしない（値は各指標の時系列が置き換える）。
+- **可視な最新の期**: その日までに可視になった期のうち、期末が最も新しい期（`intermediate__
+  disclosure_events` の時系列）。
+- **会計期**: `1Q` / `2Q` / `3Q` / `4Q`（通期は`4Q`）。期種が取れない決算短信（タイトルが「第4四半期」
+  等の変則、約15件）は、同じ期にEDINETのラベルがあればそれを使い、無ければNULL。
+- **既知の限界**:
+  - 決算短信の開示日に更新されるのは `pbr`（BPS）と配当で、**`per` のEPSは当面EDINETのみ**。そのため
+    最初の営業日の行は、`per` だけ前の期のままになる（#130 で、決算短信を先にする方針で解消する）。
+  - 決算短信は2024-03以降のデータしかない。それ以前は、EDINETの提出日（四半期報告書・通期）が起点で、
+    BPSが取れないため `pbr` はNULLになる期がある（ジャパニアス(9558)の2023年の1Q〜3Qなど）。
+  - 純資産が前期比±10%超動いた期は、`pbr` を推定せずNULLにする（下記「PBRのBPSと決算短信からの推定」）。
 
 ### PBRのBPSと決算短信からの推定（2026-11-05追加）
 

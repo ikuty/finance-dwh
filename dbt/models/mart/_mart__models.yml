@@ -348,6 +348,22 @@ models:
           通期決算短信は次期、四半期・中間は今期の予想（forecast_dividend_period_end参照）。
       - name: forecast_dividend_period_end
         description: "予想配当の対象期間の期末日（forecast_period_end、年度表記の会社はNULLのことがある）。"
+      - name: disclosure_period_end
+        description: >
+          その日に可視（開示済み）な、期末が最も新しい期の期末日（2026-11-16追加、#129）。
+          EDINETと決算短信を合わせ、期ごとに早いほうの開示で可視になる（決算短信は開示日の
+          翌日から、EDINETは提出日の翌日から）。開示済みの期がまだ無い日はNULL。
+      - name: fiscal_quarter
+        description: "disclosure_period_endの会計期。1Q / 2Q / 3Q / 4Q（通期は4Q）。期種から機械的に決まる（q1→1Q、q2/half→2Q、q3→3Q、annual→4Q）。期種が取れない決算短信の期（約15件）は、EDINETのラベルがあればそれ、無ければNULL。"
+        data_tests:
+          - accepted_values:
+              values: ['1Q', '2Q', '3Q', '4Q']
+      - name: is_first_day_after_disclosure
+        description: >
+          その期が最初に反映される営業日だけtrue。直前の取引日と、可視な最新の期が違う日
+          （銘柄の最初の日で、開示済みの期があればその日もtrue）。バリュエーション履歴を四半期ごとに
+          取得するときは、この列がtrueの行を使う。注意: 決算短信の開示日に更新されるのはpbrと配当で、
+          perのEPSは当面EDINETのみのため、perだけ前の期のままになる（#130で解消）。
 
   - name: mart__jpx_edinet__quarterly_fundamentals
     description: >

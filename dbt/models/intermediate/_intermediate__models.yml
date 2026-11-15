@@ -248,3 +248,29 @@ models:
         description: "決算短信の期末日時点の累積調整係数（株式数用、効力発生日基準）。実績配当(dividend_ttm)の基準。"
       - name: shares_disclosed_cum_adj
         description: "決算短信の開示日時点の累積調整係数（株式数用、効力発生日基準）。予想配当(dividend_forecast_annual)の基準。"
+
+  - name: intermediate__disclosure_events
+    description: >
+      「どの期の決算が、いつから開示済みとして可視になるか」を、銘柄×期末日で1行にしたもの
+      （毎回フル rebuild、Parquet、2026-11-16新設、#129）。EDINETの報告書と決算短信を合わせ、
+      同じ期に両方があれば、早いほうが可視になる日時を採る（通常は決算短信）。日次マートの
+      fiscal_quarter・disclosure_period_end・is_first_day_after_disclosureの材料。
+      会計期は期種から機械的に決まる（q1→1Q、q2/half/q2_half→2Q、q3→3Q、annual/q4→4Q）。
+    columns:
+      - name: jpx_code
+        data_tests: [not_null]
+      - name: period_end
+        data_tests: [not_null]
+      - name: fiscal_quarter
+        description: "会計期。1Q / 2Q / 3Q / 4Q（通期は4Q）。期種が取れない決算短信の期は、同じ期にEDINETのラベルがあればそれを使い、無ければNULL（約15件）。"
+        data_tests:
+          - accepted_values:
+              values: ['1Q', '2Q', '3Q', '4Q']
+      - name: visible_from
+        description: "この期が開示済みとして可視になる日時（EDINETは提出日時、決算短信は開示日の翌日0時）。日付との比較で、この日付以降の取引日から参照できる。"
+        data_tests: [not_null]
+      - name: first_source
+        description: "最初に可視になった出所。tanshin（決算短信） / edinet。"
+        data_tests:
+          - accepted_values:
+              values: ['tanshin', 'edinet']
