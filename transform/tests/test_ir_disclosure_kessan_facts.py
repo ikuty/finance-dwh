@@ -733,3 +733,83 @@ def test_run_handles_nendo_labels_for_dividend_and_period_end() -> None:
     assert row.dividend_cur_q4 == "2.60"
     assert row.dividend_cur_total == "5.20"
     assert row.dividend_fcst_total == "5.50"
+
+
+# --- 配当表の行ラベルの書式のばらつき(ソニー・イオン等、2026-11-15) -------------------------
+
+
+def test_parse_dividend_table_accepts_footnote_mark_on_period_label() -> None:
+    # ソニーグループ(スピンオフの現物配当の注記)の形
+    out = _div(
+        """
+２．配当の状況
+年間配当金
+第１四半期末 第２四半期末 第３四半期末 期末 合計
+2026年３月期※ - 12.50 - 12.50 25.00
+2027年３月期 - 17.50
+2027年３月期（予想） - 17.50 35.00
+（注）直近に公表されている配当予想からの修正の有無：無
+３．2027年３月期の連結業績予想
+""",
+        "q2_half",
+    )
+    assert [out[f"dividend_prior_{s}"] for s in ("q1", "q2", "q3", "q4", "total")] == [
+        "0", "12.50", "0", "12.50", "25.00",
+    ]
+    assert [out[f"dividend_cur_{s}"] for s in ("q1", "q2")] == ["0", "17.50"]
+    assert out["dividend_fcst_total"] == "35.00"
+
+
+def test_parse_dividend_table_accepts_numbered_footnote_mark_and_wide_dash() -> None:
+    out = _div(
+        """
+２．配当の状況
+2025年２月期※１ ― 20.00 ― 20.00 40.00
+2026年２月期 ― 20.00 ― 25.00 45.00
+2027年２月期（予想） ― 25.00 ― 25.00 50.00
+３．業績予想
+""",
+        "annual",
+    )
+    assert out["dividend_prior_total"] == "40.00"
+    assert out["dividend_cur_total"] == "45.00"
+    assert out["dividend_fcst_total"] == "50.00"
+
+
+def test_parse_dividend_table_accepts_reiwa_era_labels() -> None:
+    out = _div(
+        """
+２．配当の状況
+令和５年12月期 － 23.00 － 23.50 46.50
+令和６年12月期 － 26.00 － 26.00 52.00
+令和７年12月期（予想） － 27.00 － 27.00 54.00
+３．業績予想
+""",
+        "annual",
+    )
+    assert out["dividend_prior_total"] == "46.50"
+    assert out["dividend_cur_q2"] == "26.00"
+    assert out["dividend_fcst_total"] == "54.00"
+
+
+def test_parse_dividend_table_treats_box_drawing_dash_as_zero() -> None:
+    out = _div(
+        """
+２．配当の状況
+2025年１月期 ─ 15.00 ─ 30.00 45.00 239 16.7 4.8
+2026年１月期 ─ 0.00 ─ 0.00 0.00 0 ─ ─
+2027年１月期(予想) ─ 20.00 ─ 30.00 50.00 18.0
+３．業績予想
+""",
+        "annual",
+    )
+    assert [out[f"dividend_prior_{s}"] for s in ("q1", "q2", "q3", "q4", "total")] == [
+        "0", "15.00", "0", "30.00", "45.00",
+    ]
+    assert out["dividend_cur_q1"] == "0"
+    assert out["dividend_fcst_q1"] == "0"
+
+
+def test_normalize_number_treats_box_drawing_and_em_dash_as_missing() -> None:
+    assert m._normalize_number("─") is None
+    assert m._normalize_number("—") is None
