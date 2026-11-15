@@ -96,6 +96,14 @@
 -- 1株配当が載らず、半期開示が最新の期間に全銘柄でNULLになっていた問題への対応(#108)。
 -- 予想ベースの配当利回り（forecast_dividend_yield）も別列で持つ（決算短信の予想年間配当÷close）。
 --
+-- disclosure_period_end・fiscal_quarter・is_first_day_after_disclosure(2026-11-16追加、#129):
+-- バリュエーション履歴を四半期ごとに取得するための列。intermediate__disclosure_events
+-- （EDINETと決算短信を合わせ、期ごとに最初に可視になる日時）から、各日で「可視な最新の期」
+-- （期末が最も新しい期）とその会計期（1Q〜4Q）を出し、その期が最初に反映される営業日だけ
+-- is_first_day_after_disclosureをtrueにする。既存の指標の値は変えない。注意: 決算短信の開示日に
+-- 更新されるのはpbr（BPS）と配当で、perのEPSは当面EDINETのみ（#130で決算短信を先にする）。
+-- そのため最初の営業日の行は、perだけ前の期のままになる。
+--
 -- per/psr/dividend_yield/earnings_yieldはTTM（直近12か月）ベース(2026-11-01変更、
 -- 重要): 四半期・半期開示のeps/sales/dividend_per_shareは期首からの累積値のため、
 -- これらをそのまま分母にすると通期開示の度に値が不連続に跳ねる（実データ検証:
@@ -248,6 +256,29 @@ forecast_events as (
     qualify row_number() over (partition by jpx_code, disclosed_at order by period_end desc) = 1
 ),
 
+-- 開示イベントの時系列（#129）: その日までに可視になった期のうち、期末が最も新しい期を持ち越す。
+-- 同じvisible_fromに複数の期があれば、期末が最も新しい行（その時点の累積の結果）に絞る
+-- （ASOF JOINが同じキーの行から任意の1行を選ばないようにするため）。
+disclosure_timeline as (
+    select jpx_code, visible_from, best
+    from (
+        select
+            jpx_code,
+            visible_from,
+            period_end,
+            arg_max(
+                struct_pack(period_end := period_end, fiscal_quarter := fiscal_quarter),
+                date_diff('day', date '1970-01-01', period_end)
+            ) over (
+                partition by jpx_code
+                order by visible_from, period_end
+                rows between unbounded preceding and current row
+            ) as best
+        from {{ ref('intermediate__disclosure_events') }}
+    )
+    qualify row_number() over (partition by jpx_code, visible_from order by period_end desc) = 1
+),
+
 -- 各取引日について、その日「時点で開示済み」の直近の開示をASOF JOINで判定する。
 daily as (
     select
@@ -263,7 +294,8 @@ daily as (
         b.best.basis as bps_timeline_basis, b.best.period_end as bps_timeline_period_end,
         d.best.div_ttm as div_timeline_ttm, d.best.div_cum_adj as div_timeline_cum_adj,
         d.best.basis as div_timeline_basis, d.best.period_end as div_timeline_period_end,
-        fe.fc_value, fe.fc_cum_adj, fe.fc_period_end
+        fe.fc_value, fe.fc_cum_adj, fe.fc_period_end,
+        dt.best.period_end as disc_period_end, dt.best.fiscal_quarter as disc_fiscal_quarter
     from prices p
     asof left join fundamentals f
         on p.code = f.jpx_code
@@ -277,6 +309,9 @@ daily as (
     asof left join forecast_events fe
         on p.code = fe.jpx_code
         and fe.visible_from <= p.file_date
+    asof left join disclosure_timeline dt
+        on p.code = dt.jpx_code
+        and dt.visible_from <= p.file_date
 )
 
 select
@@ -325,5 +360,12 @@ select
     case when div_timeline_ttm is not null and close is not null and close != 0 and div_timeline_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
         then (div_timeline_ttm * div_timeline_cum_adj / file_date_cum_adj) / close end as dividend_yield,
     case when fc_value is not null and close is not null and close != 0 and fc_cum_adj is not null and file_date_cum_adj is not null and file_date_cum_adj != 0
-        then (fc_value * fc_cum_adj / file_date_cum_adj) / close end as forecast_dividend_yield
+        then (fc_value * fc_cum_adj / file_date_cum_adj) / close end as forecast_dividend_yield,
+    disc_period_end as disclosure_period_end,
+    disc_fiscal_quarter as fiscal_quarter,
+    -- その期が最初に反映される営業日。直前の取引日と可視な最新の期が違う日（銘柄の最初の日で
+    -- 開示済みの期があれば、その日も true）。
+    disc_period_end is not null
+        and disc_period_end is distinct from lag(disc_period_end) over (partition by jpx_code order by file_date)
+        as is_first_day_after_disclosure
 from daily
