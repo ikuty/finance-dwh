@@ -813,3 +813,61 @@ def test_parse_dividend_table_treats_box_drawing_dash_as_zero() -> None:
 def test_normalize_number_treats_box_drawing_and_em_dash_as_missing() -> None:
     assert m._normalize_number("─") is None
     assert m._normalize_number("—") is None
+
+
+def test_parse_dividend_table_accepts_footnote_mark_separated_by_space() -> None:
+    # ソニーの第1四半期の形: 記号の前に空白が入る
+    out = _div(
+        """
+２．配当の状況
+年間配当金
+第１四半期末 第２四半期末 第３四半期末 期末 合計
+2026年３月期 ※ - 12.50 - 12.50 25.00
+2027年３月期 -
+2027年３月期（予想） 17.50 - 17.50 35.00
+（注）直近に公表されている配当予想からの修正の有無：無
+３．業績予想
+""",
+        "q1",
+    )
+    assert [out[f"dividend_prior_{s}"] for s in ("q1", "q2", "q3", "q4", "total")] == [
+        "0", "12.50", "0", "12.50", "25.00",
+    ]
+    assert out["dividend_cur_q1"] == "0"
+    assert out["dividend_fcst_total"] == "35.00"
+
+
+def test_parse_dividend_table_accepts_spaced_numbered_mark_with_total_amount_columns() -> None:
+    # ソニーの通期の形: 「期 ※1」、合計が「-」で配当金総額・配当性向が続く
+    out = _div(
+        """
+２．配当の状況
+年間配当金 配当金総額 配当性向 株主資本配当
+第１四半期末 第２四半期末 第３四半期末 期末 合計 （合計） （連結） ※2 率（連結）
+円 銭 円 銭 円 銭 円 銭 円 銭 百万円 ％ ％
+2025年３月期 ※1 - 50.00 - 10.00 - 120,597 11.3 1.5
+2026年３月期 - 12.50 - 12.50 25.00 148,560 14.5 1.8
+2027年３月期（予想） - 17.50 - 17.50 35.00 -
+（注）当社は、前述の本スピンオフの実行により、現物配当を行いましたが、含めていません。
+３．業績予想
+""",
+        "annual",
+    )
+    assert out["dividend_prior_q2"] == "50.00"
+    assert out["dividend_cur_total"] == "25.00"
+    assert out["dividend_fcst_total"] == "35.00"
+
+
+def test_parse_dividend_table_does_not_treat_footnote_text_line_as_a_row() -> None:
+    # 「2026年３月期 ※ 当社は…」のような本文の注記は、数値の行ではないので読まない
+    out = _div(
+        """
+２．配当の状況
+2025年３月期 － 10.00 － 10.00 20.00
+2026年３月期 － 12.00 － 12.00 24.00
+2026年３月期 ※ 当社は2025年９月30日を基準日として現物配当を行いました。
+３．業績予想
+""",
+        "annual",
+    )
+    assert out["dividend_cur_total"] == "24.00"
