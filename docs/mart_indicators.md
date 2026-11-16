@@ -321,7 +321,7 @@ issue #83）。決算期末日時点の「実際の」株数・「実際に支�
 | `eps_ttm_adjusted` | TTM補正後・調整後EPS | `eps_ttm × adj_ratio` |
 | `dividend_per_share_ttm_adjusted` | TTM補正後・調整後1株配当（出所は`dividend_basis`） | `直近12か月配当 × (配当の期末側の係数 ÷ 取引日の係数)` |
 | `pbr` | 株価純資産倍率 | `close / bps_adjusted`（`bps`はTTM対象外。BPSの出所は`pbr_basis`、下記「PBRのBPSと決算短信からの推定」参照） |
-| `pbr_basis` / `pbr_bps_period_end` | PBRのBPSの出所（`edinet`または`tanshin_estimated`）とその期末日 | `pbr`がNULLの行はNULL |
+| `pbr_basis` / `pbr_bps_period_end` | PBRのBPSの出所（`edinet` / `tanshin_estimated` / `tanshin_direct`）とその期末日 | `pbr`がNULLの行はNULL |
 | `per` | 実勢PER | `close / eps_ttm_adjusted`（2026-11-01変更、TTMベース） |
 | `market_cap` | 時価総額 | `close × shares_outstanding_adjusted` |
 | `psr` | 株価売上高倍率 | `market_cap / sales_ttm`（2026-11-01変更、TTMベース） |
@@ -436,6 +436,11 @@ BPS（1株当たり純資産）は有価証券報告書（年次）にしか載�
 - 各日で、その日までに開示された**期末が最も新しい**BPS（EDINETの年次BPS、または決算短信の
   推定）を使う。決算短信は開示日の翌日から参照できる。`pbr_basis`は`edinet`または
   `tanshin_estimated`。
+- **通期は直接値**（`pbr_basis='tanshin_direct'`、#134）: 通期の決算短信は財政状態の表に
+  「1株当たり純資産」が載るため、推定せずその値を使う（`estimate_status='direct'`）。株数の変化も
+  反映済みで、下の±10%の安全装置は掛からない（成長企業の通期が利益だけで+10%を超えて
+  PBRが空になっていた）。EDINETの同期の年次BPSとの照合（8,656件）で、中央値の誤差0.000%・
+  1%以内98.7%・5%以内99.4%。表が取れない通期（約1割）と四半期・半期は、下の推定を使う。
 - **安全装置**: 自己株式の取得・増資などの株数の変化は反映できないため、純資産が前期比
   ±10%を超えて動いた決算短信は推定しない（`estimate_status='ratio_out_of_range'`）。その場合、
   最新の期末のBPSが無いので、古い年次のBPSを繰り越さず`pbr`はNULLにする（古い純資産で

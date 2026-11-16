@@ -36,7 +36,9 @@ LAKE_ROOT = os.environ.get("LAKE_ROOT", "/lake")
 LANDING_ROOT = os.environ.get("LANDING_ROOT", "/data/landing")
 
 DIVIDEND_COLUMNS = [c for c in facts_stage.FACT_COLUMNS if c.startswith("dividend_")]
-_NON_COMPARED = {"_loaded_at", "file_date", *DIVIDEND_COLUMNS}
+BPS_COLUMNS = ["bps_actual", "bps_actual_prior"]
+_NEW_COLUMNS = [*DIVIDEND_COLUMNS, *BPS_COLUMNS]
+_NON_COMPARED = {"_loaded_at", "file_date", *_NEW_COLUMNS}
 
 
 def _read_parquet(path: Path) -> list[dict[str, str | None]]:
@@ -91,7 +93,7 @@ def reextract_date(
     facts_path = facts_dir / "part.parquet"
 
     old_rows = _read_parquet(facts_path)
-    if not force and old_rows and all(c in old_rows[0] for c in DIVIDEND_COLUMNS):
+    if not force and old_rows and all(c in old_rows[0] for c in _NEW_COLUMNS):
         stats["skipped_dates"] += 1
         return stats
     if not text_path.exists() or text_path.stat().st_size == 0:
@@ -107,7 +109,7 @@ def reextract_date(
         meta = metas.get(docid)
         if meta is None or docid not in texts:
             stats["no_meta_or_text"] += 1
-            new_rows.append({**old, **{c: None for c in DIVIDEND_COLUMNS}})
+            new_rows.append({**old, **{c: old.get(c) for c in _NEW_COLUMNS}})
             continue
         title = meta.get("jpx_title") or meta.get("tdnet_title") or ""
         fact = facts_stage.run(
