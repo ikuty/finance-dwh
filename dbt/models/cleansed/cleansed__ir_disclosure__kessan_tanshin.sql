@@ -65,6 +65,8 @@ select
     try_cast(net_assets_prior as decimal(20, 4))               as net_assets_prior,
     try_cast(equity_ratio as decimal(10, 4))                   as equity_ratio,
     try_cast(equity_ratio_prior as decimal(10, 4))             as equity_ratio_prior,
+    try_cast(bps_actual as decimal(18, 4))                     as bps_actual,
+    try_cast(bps_actual_prior as decimal(18, 4))               as bps_actual_prior,
 
     try_cast(cf_operating as decimal(20, 4))                   as cf_operating,
     try_cast(cf_investing as decimal(20, 4))                   as cf_investing,

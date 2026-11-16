@@ -196,6 +196,9 @@ def test_run_niitaka_q1_consolidated_jgaap() -> None:
     assert row.total_assets == "23181"
     assert row.net_assets == "16219"
     assert row.equity_ratio == "70.0"
+    # 四半期の決算短信には1株当たり純資産が載らない
+    assert row.bps_actual is None
+    assert row.bps_actual_prior is None
     assert row.forecast_sales == "27500"
     assert row.forecast_operating_income == "1800"
     assert row.forecast_ordinary_income == "1850"
@@ -263,6 +266,9 @@ def test_run_kuraudia_annual_consolidated_jgaap_with_cf_and_combined_eps_header(
     assert row.eps_actual == "46.84"
     assert row.eps_diluted_actual is None
     assert row.total_assets == "12972"
+    # 通期は財政状態の表の4列目に「１株当たり純資産」が載る(#134)
+    assert row.bps_actual == "482.62"
+    assert row.bps_actual_prior == "440.28"
     assert row.cf_operating == "999"
     assert row.cf_investing == "-391"
     assert row.cf_financing == "-687"

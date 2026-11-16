@@ -397,6 +397,9 @@ class FactRow:
     net_assets_prior: str | None
     equity_ratio: str | None
     equity_ratio_prior: str | None
+    # 1株当たり純資産(財政状態の表の4列目。通期の決算短信にのみ載る。四半期は無いのが普通)
+    bps_actual: str | None
+    bps_actual_prior: str | None
 
     cf_operating: str | None
     cf_investing: str | None
@@ -535,11 +538,13 @@ def run(
             out["total_assets"] = vals[0] if len(vals) > 0 else None
             out["net_assets"] = vals[1] if len(vals) > 1 else None
             out["equity_ratio"] = vals[2] if len(vals) > 2 else None
+            out["bps_actual"] = vals[3] if len(vals) > 3 else None
         if len(fin_rows) >= 2:
             vals = fin_rows[1][1]
             out["total_assets_prior"] = vals[0] if len(vals) > 0 else None
             out["net_assets_prior"] = vals[1] if len(vals) > 1 else None
             out["equity_ratio_prior"] = vals[2] if len(vals) > 2 else None
+            out["bps_actual_prior"] = vals[3] if len(vals) > 3 else None
 
     # キャッシュ・フローの状況(任意、無い会社もある)
     if "bounds_cf" in bounds:

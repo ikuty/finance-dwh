@@ -14,3 +14,16 @@ where estimate_status = 'ok'
       or abs(bps_estimated / (annual_bps * (annual_cum_adj / period_end_cum_adj) * net_assets_ratio) - 1) > 1e-9
       or abs(net_assets_ratio - 1) > 0.10
   )
+
+union all
+
+-- 通期の直接値(direct)は、決算短信のbps_actualと一致し、正の値であること。
+select
+    edinet_code,
+    period_end,
+    bps_estimated,
+    bps_actual as expected,
+    net_assets_ratio
+from {{ ref('intermediate__ir_disclosure__bps_estimates') }}
+where estimate_status = 'direct'
+  and (bps_estimated is null or bps_estimated <= 0 or bps_estimated <> bps_actual)
