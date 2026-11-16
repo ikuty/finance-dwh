@@ -14,6 +14,12 @@
 -- - 前期末のBPSは、EDINETの直近の年次(period_endが決算短信の期末より前)のもの。
 -- - 株数の変化(自己株式の取得・消却・増資)は反映できない。そのため純資産が前期比
 --   ±10%を超えて動いた行は推定せずNULL(estimate_status='ratio_out_of_range')にする。
+-- - 通期の決算短信(period_type='annual')は、財政状態の表に「1株当たり純資産」が載る
+--   (bps_actual)ので、推定せずその値を直接使う(estimate_status='direct'、#134)。株数の
+--   変化も反映済みで、±10%の安全装置は不要(成長企業の通期が利益だけで+10%を超えて
+--   空になっていた)。精度(2026-11-16、保存済みテキスト): EDINETの同期の年次BPSと突合できた
+--   8,656件で中央値の誤差0.000%、1%以内98.7%、5%以内99.4%。取れない通期(約1割)と
+--   四半期・半期は、従来どおり推定する。
 --
 -- 精度の検証(2026-11-05、Mac Miniの実データ): J-Quantsの四半期BPS(正解として照合のみに
 -- 使用、推定には使っていない)229件との比較で、±10%内の209件は絶対誤差の中央値0.20%、
@@ -47,6 +53,7 @@ with tanshin as (
         consolidation,
         net_assets,
         net_assets_prior,
+        bps_actual,
         row_number() over (
             partition by edinet_code, period_end
             order by case when consolidation = 'consolidated' then 0 else 1 end,
@@ -103,6 +110,7 @@ select
     consolidation,
     net_assets,
     net_assets_prior,
+    bps_actual,
     net_assets / nullif(net_assets_prior, 0) as net_assets_ratio,
     annual_doc_id,
     annual_period_end,
@@ -110,6 +118,8 @@ select
     annual_cum_adj,
     period_end_cum_adj,
     case
+        when period_type = 'annual' and bps_actual > 0
+            then case when period_end_cum_adj is null or period_end_cum_adj = 0 then null else bps_actual end
         when net_assets is null or net_assets_prior is null or net_assets <= 0 or net_assets_prior <= 0
             then null
         when annual_bps is null or datediff('day', annual_period_end, period_end) not between 80 and 400
@@ -121,6 +131,8 @@ select
         else annual_bps * (annual_cum_adj / period_end_cum_adj) * (net_assets / net_assets_prior)
     end as bps_estimated,
     case
+        when period_type = 'annual' and bps_actual > 0
+            then case when period_end_cum_adj is null or period_end_cum_adj = 0 then 'no_adjustment_factor' else 'direct' end
         when net_assets is null or net_assets_prior is null or net_assets <= 0 or net_assets_prior <= 0
             then 'net_assets_missing'
         when annual_bps is null or datediff('day', annual_period_end, period_end) not between 80 and 400
