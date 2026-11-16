@@ -164,12 +164,12 @@ bps_events as (
         case when bps_estimated is not null then 2 else 0 end as prio,
         bps_estimated                                as bps_pe,
         period_end_cum_adj                           as pe_cum_adj,
-        'tanshin_estimated'                          as basis
+        case when estimate_status = 'direct' then 'tanshin_direct' else 'tanshin_estimated' end as basis
     from {{ ref('intermediate__ir_disclosure__bps_estimates') }}
     -- 推定できなかった理由が「純資産が大きく動いた」(ratio_out_of_range)なら、古い年次のBPSは
     -- 当てにならないのでNULLの行として採用する。純資産が取れない・前期の年次が無い等の
     -- 抽出・データ不足の場合は決算短信を無視し、従来どおり（その時点の最新の開示で判定）にする。
-    where estimate_status in ('ok', 'ratio_out_of_range')
+    where estimate_status in ('direct', 'ok', 'ratio_out_of_range')
 ),
 
 -- 開示日順に、その時点までで「期末が最も新しい（同点なら優先順位が高く、それも同じなら
