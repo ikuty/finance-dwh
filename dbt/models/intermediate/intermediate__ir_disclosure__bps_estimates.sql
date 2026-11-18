@@ -105,7 +105,7 @@ with_price as (
     asof left join {{ ref('intermediate__jpx__daily_prices_adjusted') }} p
         on p.code = w.jpx_code
         and p.file_date <= w.period_end
-)
+),
 
 -- 直接値の安全弁用に、±10%の安全装置を掛けない推定値(raw_estimate)を求める。
 with_raw as (
