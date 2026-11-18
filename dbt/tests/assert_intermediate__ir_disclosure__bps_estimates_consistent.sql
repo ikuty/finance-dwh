@@ -26,4 +26,8 @@ select
     net_assets_ratio
 from {{ ref('intermediate__ir_disclosure__bps_estimates') }}
 where estimate_status = 'direct'
-  and (bps_estimated is null or bps_estimated <= 0 or bps_estimated <> bps_actual)
+  and (
+      bps_estimated is null or bps_estimated <= 0 or bps_estimated <> bps_actual
+      -- 応急処置(#139): 日本基準の通期のみ。IFRS・US GAAPが混ざったら検知する
+      or accounting_standard is distinct from 'jgaap'
+  )
