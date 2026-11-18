@@ -20,6 +20,12 @@
 --   空になっていた)。精度(2026-11-16、保存済みテキスト): EDINETの同期の年次BPSと突合できた
 --   8,656件で中央値の誤差0.000%、1%以内98.7%、5%以内99.4%。取れない通期(約1割)と
 --   四半期・半期は、従来どおり推定する。
+-- - 【応急処置、#139】直接値は日本基準の通期のみ使う。IFRS・US GAAPの表は5列(4列目が
+--   比率(%)、BPSは5列目)で、抽出器が4列目を取るため値が比率になり、PBRが桁違いに
+--   大きくなっていた(KDDI等)。抽出器の修正と再抽出までは、これらは推定に戻す。さらに、
+--   直接値が従来の推定(年次BPS×調整比×純資産比、±10%の安全装置は掛けない)と2倍を
+--   超えてずれる場合も、直接値を使わず推定に戻す(日本基準でも表の列構成の違い等で
+--   誤りうるため)。
 --
 -- 精度の検証(2026-11-05、Mac Miniの実データ): J-Quantsの四半期BPS(正解として照合のみに
 -- 使用、推定には使っていない)229件との比較で、±10%内の209件は絶対誤差の中央値0.20%、
@@ -51,6 +57,7 @@ with tanshin as (
         period_end,
         file_date          as disclosed_at,
         consolidation,
+        accounting_standard,
         net_assets,
         net_assets_prior,
         bps_actual,
@@ -100,6 +107,34 @@ with_price as (
         and p.file_date <= w.period_end
 )
 
+-- 直接値の安全弁用に、±10%の安全装置を掛けない推定値(raw_estimate)を求める。
+with_raw as (
+    select
+        *,
+        case
+            when net_assets > 0 and net_assets_prior > 0
+                and annual_bps is not null
+                and datediff('day', annual_period_end, period_end) between 80 and 400
+                and annual_cum_adj is not null
+                and period_end_cum_adj is not null and period_end_cum_adj <> 0
+            then annual_bps * (annual_cum_adj / period_end_cum_adj) * (net_assets / net_assets_prior)
+        end as raw_estimate
+    from with_price
+),
+
+with_direct_flag as (
+    select
+        *,
+        coalesce(
+            period_type = 'annual'
+            and accounting_standard = 'jgaap'
+            and bps_actual > 0
+            and (raw_estimate is null or bps_actual / raw_estimate between 0.5 and 2),
+            false
+        ) as use_direct
+    from with_raw
+)
+
 select
     edinet_code,
     jpx_code,
@@ -108,6 +143,7 @@ select
     period_end,
     disclosed_at,
     consolidation,
+    accounting_standard,
     net_assets,
     net_assets_prior,
     bps_actual,
@@ -118,7 +154,7 @@ select
     annual_cum_adj,
     period_end_cum_adj,
     case
-        when period_type = 'annual' and bps_actual > 0
+        when use_direct
             then case when period_end_cum_adj is null or period_end_cum_adj = 0 then null else bps_actual end
         when net_assets is null or net_assets_prior is null or net_assets <= 0 or net_assets_prior <= 0
             then null
@@ -131,7 +167,7 @@ select
         else annual_bps * (annual_cum_adj / period_end_cum_adj) * (net_assets / net_assets_prior)
     end as bps_estimated,
     case
-        when period_type = 'annual' and bps_actual > 0
+        when use_direct
             then case when period_end_cum_adj is null or period_end_cum_adj = 0 then 'no_adjustment_factor' else 'direct' end
         when net_assets is null or net_assets_prior is null or net_assets <= 0 or net_assets_prior <= 0
             then 'net_assets_missing'
@@ -143,4 +179,4 @@ select
             then 'no_adjustment_factor'
         else 'ok'
     end as estimate_status
-from with_price
+from with_direct_flag
