@@ -217,6 +217,76 @@ def _find_period_rows(lines: list[str], start: int, end: int) -> list[tuple[str,
     return rows
 
 
+_UNIT_ROW_RE = re.compile(r"^[百万千億円銭％%\s]+$")
+
+
+def _financial_unit_columns(lines: list[str], start: int, end: int) -> tuple[list[str], bool] | None:
+    """財政状態の表の単位行(「百万円 百万円 百万円 ％ 円 銭」)を、列の種別のリストに直す。
+
+    種別は 'amount'(百万円・千円)/ 'pct'(％)/ 'yen'(円。1株当たり純資産)。「円」と「銭」が
+    別トークンのときは1列にまとめ、その場合は第2要素(split_sen)をTrueにする(値も
+    「1,287 25」のように2トークンに分かれる企業があるため)。単位行は最初の期ラベル行より前に
+    あり、無ければNoneを返す。IFRS・US GAAPの表は「資産合計・資本合計・親会社持分・比率・
+    1株当たり持分」の5列で、日本基準(総資産・純資産・自己資本比率・1株当たり純資産の4列)と
+    BPSの位置が違う(#139)ため、列の位置は単位行で決める。"""
+    unit_line: str | None = None
+    for line in lines[start:end]:
+        s = line.strip()
+        if _PERIOD_ROW_RE.match(s):
+            break
+        if s and _UNIT_ROW_RE.match(s) and "円" in s:
+            unit_line = s
+    if unit_line is None:
+        return None
+    toks = unit_line.split()
+    cols: list[str] = []
+    split_sen = False
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if t in ("％", "%"):
+            cols.append("pct")
+        elif t == "円":
+            cols.append("yen")
+            if i + 1 < len(toks) and toks[i + 1] == "銭":
+                split_sen = True
+                i += 1
+        elif t == "円銭":
+            cols.append("yen")
+        elif t in ("銭",):
+            pass
+        else:
+            cols.append("amount")
+        i += 1
+    return cols, split_sen
+
+
+def _pick_financial_column(
+    vals: list[str | None], unit_cols: tuple[list[str], bool] | None, kind: str
+) -> str | None:
+    """期ラベル行の数値トークンvalsから、単位行で決めた列(kind='pct'または'yen')の値を返す。
+    単位行が無い・列数が合わない・該当列が無いときはNone(推定に任せる)。"""
+    if unit_cols is None:
+        return None
+    cols, split_sen = unit_cols
+    if kind not in cols:
+        return None
+    idx = cols.index(kind)
+    if len(vals) == len(cols):
+        return vals[idx]
+    if split_sen and len(vals) == len(cols) + 1:
+        # 円と銭が別トークンの値(「1,287 25」)は、円の列で1つ多くなる。円の列より前は位置のまま、
+        # 円の列は結合(銭は2桁)、後ろの列は1つずれる。
+        yen_idx = cols.index("yen")
+        if kind == "yen":
+            whole, sen = vals[idx], vals[idx + 1]
+            if whole is not None and sen is not None and re.fullmatch(r"\d{2}", sen):
+                return f"{whole}.{sen}"
+            return None
+        return vals[idx] if idx < yen_idx else vals[idx + 1]
+    return None
+
+
 def _find_section_bounds(lines: list[str]) -> dict[str, int]:
     """主要セクションの開始行インデックスを返す(見つからなければキー無し)。"""
     # 節番号は全角(「１．」「（２）」)と半角(「1.」「(2)」)の両方が実在する
@@ -533,18 +603,27 @@ def run(
     if "bounds_2" in bounds:
         end2 = bounds.get("bounds_cf", bounds.get("bounds_dividend", len(lines)))
         fin_rows = _find_period_rows(lines, bounds["bounds_2"], end2)
+        unit_cols = _financial_unit_columns(lines, bounds["bounds_2"], end2)
+        # 比率・1株当たり純資産の列は単位行で決める。単位行が無いときは従来どおり
+        # (比率は3列目)とし、BPSは見出しに「1株当たり」があり4列のときだけ4列目とする。
+        header = "".join(lines[bounds["bounds_2"]:end2][:6]).replace(" ", "").replace("１株当たり", "1株当たり")
+        legacy_bps = unit_cols is None and "1株当たり" in header
+
+        def _ratio_and_bps(vals: list[str | None]) -> tuple[str | None, str | None]:
+            if unit_cols is not None:
+                return _pick_financial_column(vals, unit_cols, "pct"), _pick_financial_column(vals, unit_cols, "yen")
+            return (vals[2] if len(vals) > 2 else None), (vals[3] if legacy_bps and len(vals) == 4 else None)
+
         if fin_rows:
             vals = fin_rows[0][1]
             out["total_assets"] = vals[0] if len(vals) > 0 else None
             out["net_assets"] = vals[1] if len(vals) > 1 else None
-            out["equity_ratio"] = vals[2] if len(vals) > 2 else None
-            out["bps_actual"] = vals[3] if len(vals) > 3 else None
+            out["equity_ratio"], out["bps_actual"] = _ratio_and_bps(vals)
         if len(fin_rows) >= 2:
             vals = fin_rows[1][1]
             out["total_assets_prior"] = vals[0] if len(vals) > 0 else None
             out["net_assets_prior"] = vals[1] if len(vals) > 1 else None
-            out["equity_ratio_prior"] = vals[2] if len(vals) > 2 else None
-            out["bps_actual_prior"] = vals[3] if len(vals) > 3 else None
+            out["equity_ratio_prior"], out["bps_actual_prior"] = _ratio_and_bps(vals)
 
     # キャッシュ・フローの状況(任意、無い会社もある)
     if "bounds_cf" in bounds:
