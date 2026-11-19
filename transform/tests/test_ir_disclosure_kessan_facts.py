@@ -877,3 +877,92 @@ def test_parse_dividend_table_does_not_treat_footnote_text_line_as_a_row() -> No
         "annual",
     )
     assert out["dividend_cur_total"] == "24.00"
+
+
+# --- 財政状態の表の列構成(#139): BPS・比率の位置は単位行で決める ------------------------
+
+_KURAUDIA_FIN_BLOCK = """\
+（２）連結財政状態
+総資産 純資産 自己資本比率 １株当たり純資産
+百万円 百万円 ％ 円 銭
+2026年8月期 12,972 4,374 33.7 482.62
+2025年8月期 12,625 3,967 31.4 440.28"""
+
+
+def _run_with_financial_block(block: str) -> m.FactRow:
+    assert _KURAUDIA_FIN_BLOCK in _KURAUDIA_ANNUAL_TEXT
+    text = _KURAUDIA_ANNUAL_TEXT.replace(_KURAUDIA_FIN_BLOCK, block)
+    return m.run(text, "docid-fin", "2026年8月期 決算短信〔日本基準〕（連結）")
+
+
+def test_financial_table_ifrs_five_columns_takes_bps_from_last_yen_column() -> None:
+    # KDDI(IFRS): 資産合計・資本合計・親会社持分・持分比率(％)・1株当たり持分の5列。
+    # 4列目は比率で、BPSは5列目(従来は4列目を取り、PBRが桁違いになった)。
+    row = _run_with_financial_block("""\
+（２）連結財政状態
+親会社の所有者に 親会社所有者 １株当たり親会社
+資産合計 資本合計
+帰属する持分 帰属持分比率 所有者帰属持分
+百万円 百万円 百万円 ％ 円 銭
+2026年８月期 16,876,219 5,650,572 5,128,072 30.4 1,288.96
+2025年８月期 14,146,060 5,797,226 5,253,362 37.1 1,261.46""")
+    assert row.total_assets == "16876219"
+    assert row.net_assets == "5650572"
+    assert row.equity_ratio == "30.4"
+    assert row.bps_actual == "1288.96"
+    assert row.net_assets_prior == "5797226"
+    assert row.equity_ratio_prior == "37.1"
+    assert row.bps_actual_prior == "1261.46"
+
+
+def test_financial_table_ifrs_without_bps_leaves_bps_none() -> None:
+    # BPS列が無い表(単位行に「円」が無い)。最後の値(比率)をBPSと誤読しない。
+    row = _run_with_financial_block("""\
+（２）連結財政状態
+親会社の所有者に 親会社所有者
+資産合計 資本合計
+帰属する持分 帰属持分比率
+百万円 百万円 百万円 ％
+2026年８月期 19,197 7,290 7,248 37.8
+2025年８月期 17,780 5,033 4,995 28.1""")
+    assert row.net_assets == "7290"
+    assert row.equity_ratio == "37.8"
+    assert row.bps_actual is None
+    assert row.bps_actual_prior is None
+
+
+def test_financial_table_yen_and_sen_split_into_two_tokens() -> None:
+    # 「1,287 25」のように円と銭が別トークンの値は1287.25に結合する
+    row = _run_with_financial_block("""\
+（２）連結財政状態
+総資産 純資産 自己資本比率 １株当たり純資産
+百万円 百万円 ％ 円 銭
+2026年８月期 133,464 97,422 72.7 1,287 25
+2025年８月期 135,427 98,878 72.7 1,168 69""")
+    assert row.equity_ratio == "72.7"
+    assert row.bps_actual == "1287.25"
+    assert row.bps_actual_prior == "1168.69"
+
+
+def test_financial_table_extra_ratio_column_after_bps() -> None:
+    # 自己資本規制比率の列が後ろに付く表(証券会社など)。BPSは最後ではなく4列目
+    row = _run_with_financial_block("""\
+（２）財政状態
+総資産 純資産 自己資本比率 １株当たり純資産 自己資本規制比率
+百万円 百万円 ％ 円銭 ％
+2026年８月期 74,033 42,827 57.8 662.64 686.0
+2025年８月期 61,564 39,024 63.4 603.83 695.7""")
+    assert row.equity_ratio == "57.8"
+    assert row.bps_actual == "662.64"
+    assert row.bps_actual_prior == "603.83"
+
+
+def test_financial_table_without_unit_row_falls_back_to_four_column_bps() -> None:
+    # 単位行が見つからない表は従来どおり(見出しに「1株当たり」があり4列のときだけ4列目)
+    row = _run_with_financial_block("""\
+（２）連結財政状態
+総資産 純資産 自己資本比率 １株当たり純資産
+2026年８月期 12,972 4,374 33.7 482.62
+2025年８月期 12,625 3,967 31.4 440.28""")
+    assert row.equity_ratio == "33.7"
+    assert row.bps_actual == "482.62"
