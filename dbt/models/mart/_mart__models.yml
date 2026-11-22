@@ -301,7 +301,7 @@ models:
           最新の期末の決算短信で純資産が前期比±10%超動いている銘柄は、古い年次のBPSを
           繰り越さずNULLにする。
       - name: pbr_basis
-        description: "PBRのBPSの出所。edinet（年次等のEDINET開示のBPS） / tanshin_estimated（決算短信の純資産からの推定BPS） / tanshin_direct（通期の決算短信に載る1株当たり純資産）。pbrがNULLの行はNULL。"
+        description: "PBRのBPSの出所。edinet（年次等のEDINET開示のBPS） / tanshin_estimated（決算短信の純資産からの推定BPS） / tanshin_direct（決算短信の財政状態の表に載る1株当たり純資産。通期・四半期・半期）。pbrがNULLの行はNULL。"
         data_tests:
           - accepted_values:
               values: ['edinet', 'tanshin_estimated', 'tanshin_direct']

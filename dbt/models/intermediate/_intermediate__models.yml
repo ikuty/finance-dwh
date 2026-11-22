@@ -208,7 +208,7 @@ models:
       - name: period_end_cum_adj
         description: "決算短信の期末日時点の累積調整係数（権利落ち日基準）。"
       - name: estimate_status
-        description: "direct（通期の決算短信の1株当たり純資産を直接使用） / ok（純資産比による推定） / ratio_out_of_range（純資産が前期比±10%超） / net_assets_missing / no_prior_annual / no_adjustment_factor。"
+        description: "direct（決算短信の財政状態の表に載る1株当たり純資産を直接使用。通期・四半期・半期） / ok（純資産比による推定） / ratio_out_of_range（純資産が前期比±10%超） / net_assets_missing / no_prior_annual / no_adjustment_factor。"
         data_tests:
           - not_null
           - accepted_values:
