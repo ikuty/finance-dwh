@@ -17,7 +17,7 @@ where estimate_status = 'ok'
 
 union all
 
--- 通期の直接値(direct)は、決算短信のbps_actualと一致し、正の値であること。
+-- 直接値(direct、通期・四半期・半期)は、決算短信のbps_actualと一致し、正の値であること。
 select
     edinet_code,
     period_end,
