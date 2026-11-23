@@ -25,8 +25,12 @@
 -- - 【#139】直接値は会計基準を問わず使う(日本基準・IFRS・US GAAP)。IFRS・US GAAPの表は
 --   5列(4列目が比率(%)、BPSは5列目)で、かつて抽出器が4列目を取っていたためPBRが桁違い
 --   に大きくなっていた(KDDI等)が、抽出器を単位行で列を決める方式に直した(再抽出済み)。
---   なお、直接値が従来の推定(年次BPS×調整比×純資産比、±10%の安全装置は掛けない)と2倍を
---   超えてずれる場合は、直接値を使わず推定に戻す(表の列構成の違い等による誤抽出の安全弁)。
+-- - 【#139 パート3】直接値が推定(年次BPS×調整比×純資産比)と大きくずれても、直接値を使う。
+--   応急処置として推定との0.5〜2倍の安全弁を入れていたが、J-Quantsとの照合(2026-11-23)で、
+--   安全弁に掛かった61行のうち短信のBPSが一致したのは60行(98%)、推定が一致したのは0行
+--   だった。ずれの原因は、増資・自己株式取得などの株数の変化(推定は株数が同じと仮定)で、
+--   期末〜開示日の間に分割があった文書は全体で9件だけだった。誤抽出の再発に備え、直接値が
+--   推定と5倍超ずれる行を、警告のdbtテスト(assert_..._direct_plausible)で数える。
 --
 -- 精度の検証(2026-11-05、Mac Miniの実データ): J-Quantsの四半期BPS(正解として照合のみに
 -- 使用、推定には使っていない)229件との比較で、±10%内の209件は絶対誤差の中央値0.20%、
@@ -108,7 +112,8 @@ with_price as (
         and p.file_date <= w.period_end
 ),
 
--- 直接値の安全弁用に、±10%の安全装置を掛けない推定値(raw_estimate)を求める。
+-- 直接値の健全性チェック用に、±10%の安全装置を掛けない推定値(raw_estimate)を求める
+-- (bps_raw_estimate列。推定には使わない。直接値が推定と大きくずれる行を警告のdbtテストで数える)。
 with_raw as (
     select
         *,
@@ -126,11 +131,7 @@ with_raw as (
 with_direct_flag as (
     select
         *,
-        coalesce(
-            bps_actual > 0
-            and (raw_estimate is null or bps_actual / raw_estimate between 0.5 and 2),
-            false
-        ) as use_direct
+        coalesce(bps_actual > 0, false) as use_direct
     from with_raw
 )
 
@@ -146,6 +147,7 @@ select
     net_assets,
     net_assets_prior,
     bps_actual,
+    raw_estimate as bps_raw_estimate,
     net_assets / nullif(net_assets_prior, 0) as net_assets_ratio,
     annual_doc_id,
     annual_period_end,
