@@ -205,6 +205,8 @@ models:
         data_tests: [not_null]
       - name: bps_estimated
         description: "推定BPS（決算短信の期末時点の株式数基準、period_end_cum_adjと対）。estimate_status='ok'または'direct'のときのみ値を持つ。"
+      - name: bps_raw_estimate
+        description: "参考値: 年次BPS×調整比×純資産比（±10%の安全装置なし）。推定には使わない。直接値の健全性チェック（assert_..._direct_plausible）用。"
       - name: period_end_cum_adj
         description: "決算短信の期末日時点の累積調整係数（権利落ち日基準）。"
       - name: estimate_status
